@@ -59,16 +59,22 @@ unity_catalog:
 execution:
   # true  -> Usa los datos sintéticos generados en el Notebook 00 (corre en ~3 min)
   # false -> Procesa los archivos reales en /Volumes/.../raw_data/ (31.8M filas H&M)
-  use_smoke_test: true
+  use_smoke_test: false
 
   # Dataset activo para el pipeline principal: "hm", "visuelle", "m5_control", "local_colombia"
   active_dataset: "hm"
 
+  # Parámetros de ventana temporal y muestreo estratificado sobre el catálogo real de H&M
+  hm_study_weeks: 60
+  max_benchmark_series: 1000
+  hm_huggingface_mirror: "https://huggingface.co/datasets/rupikaahere/hnm-fashion-recommendations-data/resolve/main"
+
   # Rutas relativas dentro del Volumen raw_data para datos reales
   raw_files:
-    hm_transactions: "hm/transactions_train.csv"
+    hm_transactions: "hm/transactions_train.parquet"
     hm_articles: "hm/articles.csv"
-    hm_customers: "hm/customers.csv"
+    hm_articles_parquet: "hm/articles.parquet"
+    hm_customers: "hm/customers.parquet"
     visuelle_sales: "visuelle/visuelle_weekly_sales.csv"
     m5_sales: "m5/sales_train_evaluation.csv"
     local_colombia_sales: "local_colombia/ventas_semanales_sku.csv"

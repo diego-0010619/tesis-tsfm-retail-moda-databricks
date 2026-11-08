@@ -32,14 +32,14 @@ Aunque desde 2024 han surgido **Modelos Fundacionales de Series de Tiempo (TSFM)
 | :--- | :--- |
 | **P (Población)** | Series de demanda semanal por artículo (`article_id`) y canal (`sales_channel_id`) en el retail de moda, estratificadas según la matriz Syntetos-Boylan ($ADI$, $CV^2$) en regímenes `Smooth`, `Erratic`, `Intermittent`, `Lumpy` y `Cold_Start`. |
 | **I (Intervención)** | Modelos fundacionales de series de tiempo de pesos abiertos (**Chronos-Bolt**, **Chronos-2**, **ChronosX**, **TimesFM** y **Moirai**) evaluados en tres modalidades: (i) *zero-shot* univariado, (ii) *zero-shot* con covariables exógenas (precio, descuento, canal y calendario comercial) y (iii) adaptación eficiente de parámetros mediante **LoRA (PEFT)**. |
-| **C (Comparación)** | Modelo global supervisado **LightGBM** (`MLForecast`) y modelos estadísticos clásicos por serie (**Croston Classic**, **Croston SBA**, **TSB**, **AutoETS** y **SeasonalNaive** vía `StatsForecast`). |
-| **O (Outcomes)** | **1. Precisión puntual y probabilística:** WAPE, MASE y WQL (P10, P50, P90).<br>**2. Impacto en inventario (*Decision-Aware*):** Sesgo (*Forecast Bias*), nivel de servicio efectivo (*Fill Rate*), ventas perdidas (*Lost Sales*) y sobre-stock promedio (*Overstock*).<br>**3. Escalabilidad Big Data:** Tiempo y costo computacional normalizado por cada **1.000 series** en Apache Spark para escalas de $1.000$, $10.000$ y $100.000$ series. |
+| **C (Comparación)** | Modelo global supervisado **LightGBM** (evaluación multi-paso recursiva honesta a $H=12$ semanas) y 7 modelos estadísticos/econométricos por serie (**ARIMA**, **SARIMA**, **Croston Classic**, **Croston SBA**, **TSB**, **AutoETS** y **SeasonalNaive**), incluyendo batería formal de diagnósticos econométricos (**ADF**, **KPSS**, fuerza estacional $F_S$, **AIC/BIC** y **Ljung-Box $Q(8)$**). |
+| **O (Outcomes)** | **1. Precisión puntual y probabilística:** WAPE, MASE y WQL (P10, P50, P90).<br>**2. Impacto en inventario (*Decision-Aware*):** Sesgo (*Forecast Bias*), nivel de servicio efectivo (*Fill Rate* con meta SLA $\ge 90\%$), ventas perdidas (*Lost Sales*) y costo logístico total en USD.<br>**3. Escalabilidad Big Data:** Tiempo y costo computacional normalizado por cada **1.000 series** en Apache Spark para escalas de $100$ a $100.000$ series. |
 
 ---
 
 ## 2. Arquitectura Lakehouse en Databricks (Medallion + Unity Catalog)
 
-El proyecto implementa una arquitectura **Medallion (Bronze $\rightarrow$ Silver $\rightarrow$ Gold)** gobernada en **Unity Catalog** (`workspace.fashion_forecasting`) y versionada mediante **Databricks Git Folders**:
+El proyecto implementa una arquitectura **Medallion (Bronze $\rightarrow$ Silver $\rightarrow$ Gold)** gobernada en **Unity Catalog** (`workspace.fashion_forecasting`), orquestada mediante **Databricks Asset Bundles (DABs — Lakeflow Jobs)** y versionada en GitHub:
 
 ```mermaid
 flowchart LR
@@ -52,18 +52,19 @@ flowchart LR
     subgraph Bronze["Capa Bronze (Delta Lake)"]
         B1["bronze_hm_transactions\n(SHA-256 Ley 1581)"]
         B2["bronze_hm_articles"]
-        B3["bronze_visuelle"]
+        B3["bronze_visuelle_coldstart"]
     end
 
     subgraph Silver["Capa Silver (Feature Store & Regímenes)"]
-        S1["silver_fashion_weekly_panel\n(Relleno explícito de ceros + Covariables)"]
+        S1["silver_fashion_weekly_panel\n(Ceros explícitos + Anti-Leakage)"]
         S2["silver_regime_catalog\n(ADI, CV2: Smooth, Erratic,\nIntermittent, Lumpy, Cold_Start)"]
     end
 
-    subgraph Gold["Capa Gold (Inferencia, Inventario y Decisión)"]
-        G1["gold_forecasts_baselines\n(Croston, SBA, TSB, ETS, LightGBM)"]
-        G2["gold_forecasts_tsfm\n(Chronos, TimesFM, Moirai, LoRA)"]
-        G3["gold_benchmark_summary &\ngold_decision_matrix"]
+    subgraph Gold["Capa Gold (15 Modelos, Econometría e Inventario)"]
+        G0["gold_arima_vs_sarima_diagnostics\n(ADF, KPSS, F_S, AIC/BIC, Ljung-Box)"]
+        G1["gold_forecasts_baselines\n(ARIMA, SARIMA, Croston, SBA, TSB, ETS, LightGBM)"]
+        G2["gold_forecasts_tsfm\n(Chronos, ChronosX, TimesFM, Moirai, LoRA)"]
+        G3["gold_benchmark_summary,\ngold_inventory_simulation &\ngold_decision_matrix"]
     end
 
     Raw --> Bronze --> Silver --> Gold

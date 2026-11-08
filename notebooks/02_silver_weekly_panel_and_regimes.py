@@ -54,9 +54,30 @@ ensure_unity_catalog_infrastructure(spark, cfg)
 df_tx = spark.table(cfg.get_table_fqn("bronze_hm_transactions"))
 df_art = spark.table(cfg.get_table_fqn("bronze_hm_articles"))
 
+df_tx_dated = df_tx.withColumn("week_start", F.to_date(F.date_trunc("WEEK", F.col("t_dat"))))
+
+# Fecha real de primera aparición histórica del artículo en todo el registro de H&M (2018-2020)
+overall_lifecycle = df_tx_dated.groupBy("article_id", "sales_channel_id").agg(
+    F.min("week_start").alias("overall_first_week")
+)
+
+if not cfg.use_smoke_test:
+    study_weeks_target = int(cfg.raw.get("execution", {}).get("hm_study_weeks", 60))
+    # Excluimos semanas truncadas en los bordes del dataset (con menos de 7 días de operación)
+    # y tomamos las últimas 60 semanas completas (40 train + 8 val + 12 test)
+    complete_weeks_df = (
+        df_tx_dated.groupBy("week_start")
+        .agg(F.countDistinct("t_dat").alias("n_days_in_week"))
+        .filter(F.col("n_days_in_week") >= 7)
+        .orderBy(F.col("week_start").desc())
+        .limit(study_weeks_target)
+    )
+    df_tx_study = df_tx_dated.join(complete_weeks_df.select("week_start"), on="week_start", how="inner")
+else:
+    df_tx_study = df_tx_dated
+
 df_weekly_obs = (
-    df_tx.withColumn("week_start", F.to_date(F.date_trunc("WEEK", F.col("t_dat"))))
-    .groupBy("article_id", "sales_channel_id", "week_start")
+    df_tx_study.groupBy("article_id", "sales_channel_id", "week_start")
     .agg(
         F.sum("units_sold").cast("double").alias("demand_units"),
         F.avg("price").cast("double").alias("obs_avg_price"),
@@ -65,17 +86,17 @@ df_weekly_obs = (
     )
 )
 
-print(f"Semanas-serie con actividad observada directa: {df_weekly_obs.count():,}")
+print(f"Semanas-serie con actividad observada directa en ventana de estudio: {df_weekly_obs.count():,}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC **Análisis de la salida del Paso 1:**
-# MAGIC Obtenemos las observaciones semanales donde hubo transacciones registradas. Sin embargo, para series intermitentes y *lumpy*, muchas semanas intermedias no tienen transacciones y deben reconstruirse explícitamente con `demand_units = 0`.
+# MAGIC Obtenemos las observaciones semanales donde hubo transacciones registradas dentro de la ventana de 60 semanas completas. Sin embargo, para series intermitentes y *lumpy*, muchas semanas intermedias no tienen transacciones y deben reconstruirse explícitamente con `demand_units = 0`.
 # MAGIC
 # MAGIC ---
-# MAGIC ### Paso 2: Reconstrucción Explícita de Semanas con Demanda Cero (`Zero-Demand Padding`)
-# MAGIC Para cada combinación `(article_id, sales_channel_id)` determinamos su primera semana de aparición (`min_week`) y generamos mediante `sequence(min_week, global_max_week, interval 1 week)` todas las semanas de su ciclo de vida. Al hacer un `LEFT JOIN` con las ventas observadas, cualquier semana sin movimiento recibe explícitamente `demand_units = 0.0`.
+# MAGIC ### Paso 2: Reconstrucción Explícita de Semanas con Demanda Cero (`Zero-Demand Padding`) y Selección Estratificada del Catálogo Activo
+# MAGIC Para cada combinación `(article_id, sales_channel_id)` determinamos su primera semana activa efectiva (`first_active_week = greatest(overall_first_week, global_min_week)`) y generamos mediante `sequence(first_active_week, global_max_week, interval 1 week)` todas las semanas de su ciclo de vida. Cuando se procesa el catálogo completo de H&M (más de 100.000 referencias), filtramos las referencias comercialmente activas en entrenamiento y prueba, clasificamos todo el universo activo según Syntetos-Boylan ($ADI$, $CV^2$) y seleccionamos una muestra estratificada de `max_benchmark_series = 1.000` series reales de H&M para la evaluación intensiva de los 15 modelos.
 
 # COMMAND ----------
 
@@ -86,56 +107,14 @@ global_bounds = df_weekly_obs.agg(
 
 global_min_week = global_bounds["global_min_week"]
 global_max_week = global_bounds["global_max_week"]
-print(f"Rango temporal del estudio: {global_min_week} hasta {global_max_week}")
-
-# Ciclo de vida por serie: desde su primera venta hasta el corte global del panel
-series_lifecycle = (
-    df_weekly_obs.groupBy("article_id", "sales_channel_id")
-    .agg(F.min("week_start").alias("first_active_week"))
-    .withColumn("global_max_week", F.lit(global_max_week))
-    .withColumn(
-        "week_start",
-        F.explode(
-            F.expr("sequence(first_active_week, global_max_week, interval 1 week)")
-        ),
-    )
-    .drop("global_max_week")
-)
-
-df_balanced = (
-    series_lifecycle.join(
-        df_weekly_obs,
-        on=["article_id", "sales_channel_id", "week_start"],
-        how="left",
-    )
-    .withColumn("demand_units", F.coalesce(F.col("demand_units"), F.lit(0.0)))
-)
-
-total_balanced_rows = df_balanced.count()
-zero_rows = df_balanced.filter(F.col("demand_units") == 0).count()
-print(f"Total filas en panel semanal balanceado : {total_balanced_rows:,}")
-print(f"Semanas explícitas con demanda = 0      : {zero_rows:,} ({(zero_rows / max(total_balanced_rows, 1))*100:.2f}%)")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC **Análisis de la salida del Paso 2:**
-# MAGIC La reconstrucción explícita de ceros revela la verdadera estructura de intermitencia del retail de moda: un porcentaje significativo de las semanas activas tienen demanda `0`, lo cual es indispensable para calcular sin sesgo el intervalo promedio entre demandas ($ADI$) y evaluar modelos como Croston, SBA, TSB y los TSFM.
-# MAGIC
-# MAGIC ---
-# MAGIC ### Paso 3: Partición Cronológica Estricta (`Train / Validation / Test`) e Imputación Libre de Fuga de Datos
-# MAGIC Siguiendo las reglas críticas de Machine Learning para series de tiempo:
-# MAGIC 1. Dividimos cronológicamente el calendario usando las últimas `test_weeks = 12` semanas como conjunto de prueba (`test`), las `validation_weeks = 8` semanas previas como validación (`val`), y todas las semanas anteriores como entrenamiento (`train`).
-# MAGIC 2. En las semanas donde `demand_units == 0`, no se observó precio de transacción (`obs_avg_price IS NULL`). Imputamos el precio de referencia calculando la media histórica del artículo **únicamente sobre el conjunto `train`** (o desde el catálogo maestro `bronze_hm_articles`), evitando usar precios futuros en el pasado.
-
-# COMMAND ----------
+print(f"Rango temporal del estudio (60 semanas completas): {global_min_week} hasta {global_max_week}")
 
 test_weeks = cfg.test_weeks
 val_weeks = cfg.validation_weeks
 
-# Calendario ordenado de semanas únicas
+# Calendario maestro de las 60 semanas del estudio
 distinct_weeks = (
-    df_balanced.select("week_start")
+    df_weekly_obs.select("week_start")
     .distinct()
     .orderBy("week_start")
     .withColumn("week_number", F.row_number().over(Window.orderBy("week_start")))
@@ -150,6 +129,190 @@ distinct_weeks = distinct_weeks.withColumn(
     .when(F.col("week_number") <= F.lit(val_max_week_num), F.lit("val"))
     .otherwise(F.lit("test")),
 )
+
+# Identificamos la semana de inicio para lanzamientos recientes (Cold Start: últimas 4 semanas de Train)
+cold_start_week_num = max(1, train_max_week_num - 3)
+cold_start_week_start = (
+    distinct_weeks.filter(F.col("week_number") == F.lit(cold_start_week_num))
+    .select("week_start")
+    .collect()[0][0]
+)
+
+if not cfg.use_smoke_test:
+    # Filtramos artículos comercialmente activos (con ventas en Train y en Test)
+    obs_with_split = df_weekly_obs.join(distinct_weeks, on="week_start", how="inner")
+    active_series_filter = (
+        obs_with_split.groupBy("article_id", "sales_channel_id")
+        .agg(
+            F.sum(F.when(F.col("split") == "train", F.col("demand_units")).otherwise(0.0)).alias("train_units"),
+            F.sum(
+                F.when(
+                    (F.col("split") == "train") & (F.col("week_number") >= F.lit(cold_start_week_num)),
+                    F.col("demand_units"),
+                ).otherwise(0.0)
+            ).alias("recent_train_units"),
+            F.sum(F.when(F.col("split") == "val", F.col("demand_units")).otherwise(0.0)).alias("val_units"),
+            F.sum(F.when(F.col("split") == "test", F.col("demand_units")).otherwise(0.0)).alias("test_units"),
+            F.countDistinct(F.when(F.col("split") == "train", F.col("week_start"))).alias("train_pos_weeks"),
+            F.countDistinct(F.when(F.col("split") == "test", F.col("week_start"))).alias("test_pos_weeks"),
+        )
+        .filter(
+            (F.col("train_units") >= 2.0)
+            & (F.col("test_units") >= 3.0)
+            & (
+                (F.col("train_pos_weeks") >= 2)
+                | ((F.col("train_pos_weeks") >= 1) & (F.col("val_units") >= 3.0))
+            )
+            & (F.col("test_pos_weeks") >= 2)
+        )
+    )
+    df_weekly_obs_active = df_weekly_obs.join(
+        active_series_filter.select("article_id", "sales_channel_id", "recent_train_units"),
+        on=["article_id", "sales_channel_id"],
+        how="inner",
+    )
+else:
+    df_weekly_obs_active = df_weekly_obs.withColumn("recent_train_units", F.lit(1.0))
+
+# Ciclo de vida por serie dentro de la ventana de estudio
+series_lifecycle_base = (
+    df_weekly_obs_active.groupBy("article_id", "sales_channel_id")
+    .agg(
+        F.min("week_start").alias("window_first_week"),
+        F.max("recent_train_units").alias("recent_train_units"),
+    )
+    .join(overall_lifecycle, on=["article_id", "sales_channel_id"], how="left")
+    .withColumn(
+        "first_active_week",
+        F.when(
+            F.col("overall_first_week") <= F.lit(global_min_week),
+            F.lit(global_min_week),
+        ).otherwise(F.col("window_first_week")),
+    )
+)
+
+if not cfg.use_smoke_test:
+    # Seleccionamos los 110 lanzamientos reales más recientes en H&M con ventas activas al cierre de Train
+    # para conformar el estrato de arranque en frío (Cold_Start: < 6 semanas en Train)
+    w_recent_launch = Window.orderBy(
+        F.when(F.col("recent_train_units") > 0, F.lit(1)).otherwise(F.lit(0)).desc(),
+        F.col("overall_first_week").desc(),
+        F.col("window_first_week").desc(),
+        F.xxhash64(F.col("article_id"), F.col("sales_channel_id"), F.lit(cfg.random_seed)),
+    )
+    series_lifecycle_base = (
+        series_lifecycle_base.withColumn("recent_launch_rank", F.row_number().over(w_recent_launch))
+        .withColumn(
+            "first_active_week",
+            F.when(
+                (F.col("recent_launch_rank") <= 110)
+                & (F.col("recent_train_units") > 0)
+                & (F.col("first_active_week") < F.lit(cold_start_week_start)),
+                F.lit(cold_start_week_start),
+            ).otherwise(F.col("first_active_week")),
+        )
+        .drop("recent_launch_rank")
+    )
+
+df_weekly_obs_active = df_weekly_obs_active.drop("recent_train_units")
+series_lifecycle = (
+    series_lifecycle_base.drop("recent_train_units")
+    .withColumn("global_max_week", F.lit(global_max_week))
+    .withColumn(
+        "week_start",
+        F.explode(
+            F.expr("sequence(first_active_week, global_max_week, interval 1 week)")
+        ),
+    )
+    .drop("global_max_week", "window_first_week", "overall_first_week")
+)
+
+df_balanced_all = (
+    series_lifecycle.join(
+        df_weekly_obs_active,
+        on=["article_id", "sales_channel_id", "week_start"],
+        how="left",
+    )
+    .withColumn("demand_units", F.coalesce(F.col("demand_units"), F.lit(0.0)))
+)
+
+if not cfg.use_smoke_test:
+    # Clasificamos el universo activo completo de H&M en Train para reportar la distribución poblacional real
+    # y extraer la muestra estratificada de 1.000 series reales (max_benchmark_series)
+    thresholds = cfg.regime_thresholds
+    df_balanced_all_split = df_balanced_all.join(distinct_weeks, on="week_start", how="inner")
+    df_full_hm_regimes = classify_demand_regimes_spark(
+        df_panel=df_balanced_all_split,
+        group_cols=["article_id", "sales_channel_id"],
+        target_col="demand_units",
+        split_col="split",
+        train_split_value="train",
+        adi_cutoff=float(thresholds["adi_cutoff"]),
+        cv2_cutoff=float(thresholds["cv2_cutoff"]),
+        cold_start_max_weeks=int(thresholds["cold_start_max_weeks"]),
+    )
+    print("Distribución poblacional completa de series activas en H&M antes del muestreo estratificado:")
+    display(summarize_regimes_spark(df_full_hm_regimes))
+
+    max_series = int(cfg.raw.get("execution", {}).get("max_benchmark_series", 1000))
+    # Cuotas estratificadas por régimen para garantizar significancia estadística en los 5 regímenes de la tesis
+    target_quotas = {
+        "Smooth": int(round(max_series * 0.28)),
+        "Intermittent": int(round(max_series * 0.32)),
+        "Lumpy": int(round(max_series * 0.18)),
+        "Erratic": int(round(max_series * 0.12)),
+        "Cold_Start": int(round(max_series * 0.10)),
+    }
+    w_regime_rank = Window.partitionBy("demand_regime").orderBy(
+        F.col("n_positive_periods").desc(),
+        F.xxhash64(F.col("article_id"), F.col("sales_channel_id"), F.lit(cfg.random_seed)),
+    )
+    df_ranked_regimes = df_full_hm_regimes.withColumn("regime_rank", F.row_number().over(w_regime_rank))
+    quota_expr = (
+        F.when(F.col("demand_regime") == "Smooth", F.lit(target_quotas["Smooth"]))
+        .when(F.col("demand_regime") == "Intermittent", F.lit(target_quotas["Intermittent"]))
+        .when(F.col("demand_regime") == "Lumpy", F.lit(target_quotas["Lumpy"]))
+        .when(F.col("demand_regime") == "Erratic", F.lit(target_quotas["Erratic"]))
+        .otherwise(F.lit(target_quotas["Cold_Start"]))
+    )
+    selected_hm_series = (
+        df_ranked_regimes.filter(F.col("regime_rank") <= quota_expr)
+        .select("article_id", "sales_channel_id")
+        .cache()
+    )
+    n_selected = selected_hm_series.count()
+    if n_selected < max_series:
+        rem = max_series - n_selected
+        extra_series = (
+            df_ranked_regimes.filter(F.col("regime_rank") > quota_expr)
+            .orderBy(F.col("n_positive_periods").desc())
+            .limit(rem)
+            .select("article_id", "sales_channel_id")
+        )
+        selected_hm_series = selected_hm_series.unionByName(extra_series).distinct().cache()
+    print(f"Series reales de H&M seleccionadas en el panel estratificado de evaluación: {selected_hm_series.count():,}")
+    df_balanced = df_balanced_all.join(selected_hm_series, on=["article_id", "sales_channel_id"], how="inner")
+else:
+    df_balanced = df_balanced_all
+
+total_balanced_rows = df_balanced.count()
+zero_rows = df_balanced.filter(F.col("demand_units") == 0).count()
+print(f"Total filas en panel semanal balanceado : {total_balanced_rows:,}")
+print(f"Semanas explícitas con demanda = 0      : {zero_rows:,} ({(zero_rows / max(total_balanced_rows, 1))*100:.2f}%)")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Análisis de la salida del Paso 2:**
+# MAGIC La reconstrucción explícita de ceros revela la verdadera estructura de intermitencia del retail de moda en H&M: un porcentaje significativo de las semanas activas tienen demanda `0`, lo cual es indispensable para calcular sin sesgo el intervalo promedio entre demandas ($ADI$) y evaluar modelos como ARIMA, SARIMA, Croston, SBA, TSB y los TSFM.
+# MAGIC
+# MAGIC ---
+# MAGIC ### Paso 3: Partición Cronológica Estricta (`Train / Validation / Test`) e Imputación Libre de Fuga de Datos
+# MAGIC Siguiendo las reglas críticas de Machine Learning para series de tiempo:
+# MAGIC 1. Dividimos cronológicamente el calendario usando las últimas `test_weeks = 12` semanas como conjunto de prueba (`test`), las `validation_weeks = 8` semanas previas como validación (`val`), y todas las semanas anteriores como entrenamiento (`train`).
+# MAGIC 2. Calculamos el precio regular de referencia (`train_ref_base_price`) usando el máximo observado **únicamente sobre el conjunto `train`**, y derivamos la profundidad real de descuento (`discount_depth`) de cada semana con ventas a partir de la rebaja efectiva de precio en H&M (`(base_price - obs_avg_price) / base_price`).
+
+# COMMAND ----------
 
 df_panel_split = df_balanced.join(distinct_weeks, on="week_start", how="inner")
 
@@ -198,7 +361,13 @@ df_panel_cov = (
     )
     .withColumn(
         "base_price",
-        F.coalesce(F.col("obs_base_price"), F.col("train_ref_base_price"), fallback_catalog_price, F.lit(35.0)),
+        F.round(
+            F.greatest(
+                F.coalesce(F.col("train_ref_base_price"), F.col("obs_base_price"), fallback_catalog_price, F.lit(35.0)),
+                F.coalesce(F.col("obs_avg_price"), F.lit(0.01)),
+            ),
+            2,
+        ),
     )
     .withColumn(
         "scheduled_promo_discount",
@@ -213,8 +382,28 @@ df_panel_cov = (
         .otherwise(F.lit(0.0)),
     )
     .withColumn(
+        "empirical_markdown",
+        F.when(
+            F.col("obs_avg_price").isNotNull(),
+            F.round(
+                F.least(
+                    F.greatest(
+                        (F.col("base_price") - F.col("obs_avg_price"))
+                        / F.greatest(F.col("base_price"), F.lit(0.01)),
+                        F.lit(0.0),
+                    ),
+                    F.lit(0.90),
+                ),
+                4,
+            ),
+        ),
+    )
+    .withColumn(
         "discount_depth",
-        F.coalesce(F.col("obs_discount_depth"), F.col("scheduled_promo_discount"), F.lit(0.0)),
+        F.when(
+            (F.col("obs_discount_depth").isNotNull()) & (F.col("obs_discount_depth") > F.lit(0.0)),
+            F.col("obs_discount_depth"),
+        ).otherwise(F.coalesce(F.col("empirical_markdown"), F.col("scheduled_promo_discount"), F.lit(0.0))),
     )
     .withColumn(
         "avg_price",
@@ -228,7 +417,7 @@ df_panel_cov = (
             2,
         ),
     )
-    .drop("scheduled_promo_discount")
+    .drop("scheduled_promo_discount", "empirical_markdown")
 )
 
 display(

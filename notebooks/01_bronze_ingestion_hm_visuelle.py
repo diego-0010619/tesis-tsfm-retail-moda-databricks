@@ -80,10 +80,57 @@ smoke_vis_csv = Path(cfg.smoke_test_data_path) / "visuelle_smoke.csv"
 
 real_hm_tx_path = cfg.get_raw_file_path("hm_transactions")
 real_hm_art_path = cfg.get_raw_file_path("hm_articles")
+real_hm_cust_path = cfg.get_raw_file_path("hm_customers")
 
 table_tx_fqn = cfg.get_table_fqn("bronze_hm_transactions")
 table_art_fqn = cfg.get_table_fqn("bronze_hm_articles")
+table_cust_fqn = cfg.get_table_fqn("bronze_hm_customers")
 table_vis_fqn = cfg.get_table_fqn("bronze_visuelle")
+
+
+def ensure_real_hm_files_in_volume(cfg_obj) -> Path:
+    """
+    Verifica que los archivos oficiales de H&M existan en el Volumen gobernado de
+    Unity Catalog (/Volumes/.../raw_data/hm/). Si aún no están presentes, los descarga
+    directamente desde el repositorio público hacia el Volumen de Databricks.
+    """
+    import time
+    import urllib.request
+
+    hm_vol_dir = Path(cfg_obj.volume_path) / "hm"
+    hm_vol_dir.mkdir(parents=True, exist_ok=True)
+    hf_base = cfg_obj.raw.get("execution", {}).get(
+        "hm_huggingface_mirror",
+        "https://huggingface.co/datasets/rupikaahere/hnm-fashion-recommendations-data/resolve/main",
+    )
+    files_spec = [
+        ("data/processed/articles.parquet", "articles.parquet"),
+        ("data/raw/articles.csv", "articles.csv"),
+        ("data/processed/customers.parquet", "customers.parquet"),
+        ("data/processed/transactions_train.parquet", "transactions_train.parquet"),
+    ]
+    for remote_rel, local_name in files_spec:
+        dest = hm_vol_dir / local_name
+        if dest.exists() and dest.stat().st_size > 1024 * 1024:
+            print(f"  [OK EN VOLUMEN] {dest} ({dest.stat().st_size / (1024*1024):.2f} MB)")
+            continue
+        url = f"{hf_base}/{remote_rel}"
+        print(f"  [DESCARGANDO EN VOLUMEN] {local_name} desde {url} ...")
+        t0 = time.time()
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Databricks-UPB-Thesis)"})
+        tmp_dest = dest.with_suffix(dest.suffix + ".part")
+        with urllib.request.urlopen(req, timeout=300) as resp, open(tmp_dest, "wb") as f_out:
+            while True:
+                chunk = resp.read(16 * 1024 * 1024)
+                if not chunk:
+                    break
+                f_out.write(chunk)
+        tmp_dest.replace(dest)
+        print(
+            f"  [COMPLETADO] {dest} ({dest.stat().st_size / (1024*1024):.2f} MB en {time.time() - t0:.1f}s)"
+        )
+    return hm_vol_dir
+
 
 if cfg.use_smoke_test:
     print("Cargando datos desde modo Smoke Test...")
@@ -92,21 +139,49 @@ if cfg.use_smoke_test:
         df_raw_art = spark.read.option("header", "true").option("inferSchema", "true").csv(str(smoke_art_csv))
         df_raw_vis = spark.read.option("header", "true").option("inferSchema", "true").csv(str(smoke_vis_csv))
     else:
-        # Si ya fueron volcados a Delta por el Notebook 00, leemos desde las tablas Bronze semilla
         df_raw_tx = spark.table(table_tx_fqn)
         df_raw_art = spark.table(table_art_fqn)
         df_raw_vis = spark.table(table_vis_fqn)
+    df_raw_cust = None
 else:
-    print(f"Cargando dataset real de H&M desde: {real_hm_tx_path}")
-    df_raw_tx = spark.read.option("header", "true").option("inferSchema", "true").csv(real_hm_tx_path)
-    df_raw_art = spark.read.option("header", "true").option("inferSchema", "true").csv(real_hm_art_path)
-    # Estandarización de columnas cuando se lee el CSV original de Kaggle H&M
+    hm_vol_dir = ensure_real_hm_files_in_volume(cfg)
+    print(f"Cargando dataset OFICIAL REAL de H&M desde Unity Catalog Volume: {hm_vol_dir}")
+    if str(real_hm_tx_path).endswith(".parquet"):
+        df_raw_tx = spark.read.parquet(str(real_hm_tx_path))
+    else:
+        df_raw_tx = spark.read.option("header", "true").option("inferSchema", "true").csv(str(real_hm_tx_path))
+
+    if str(real_hm_art_path).endswith(".parquet"):
+        df_raw_art = spark.read.parquet(str(real_hm_art_path))
+    else:
+        df_raw_art = spark.read.option("header", "true").option("inferSchema", "true").csv(str(real_hm_art_path))
+
+    df_raw_art = df_raw_art.withColumn(
+        "article_id", F.lpad(F.col("article_id").cast("string"), 10, "0")
+    )
+    df_raw_tx = df_raw_tx.withColumn(
+        "article_id", F.lpad(F.col("article_id").cast("string"), 10, "0")
+    )
+
+    # En Kaggle H&M cada fila de transactions_train representa 1 unidad comprada y el precio
+    # viene escalado en unidades monetarias relativas (~0.001 a 0.59). Multiplicamos por 1000.0
+    # para expresarlo en USD minoristas reales (~$1.00 a $590.00 USD).
     if "units_sold" not in df_raw_tx.columns:
         df_raw_tx = df_raw_tx.withColumn("units_sold", F.lit(1))
+    df_raw_tx = df_raw_tx.withColumn(
+        "price",
+        F.when(F.col("price").cast("double") < F.lit(5.0), F.round(F.col("price").cast("double") * F.lit(1000.0), 2))
+        .otherwise(F.round(F.col("price").cast("double"), 2)),
+    )
     if "base_price" not in df_raw_tx.columns:
         df_raw_tx = df_raw_tx.withColumn("base_price", F.col("price").cast("double"))
     if "discount_depth" not in df_raw_tx.columns:
         df_raw_tx = df_raw_tx.withColumn("discount_depth", F.lit(0.0))
+
+    if Path(real_hm_cust_path).exists():
+        df_raw_cust = spark.read.parquet(str(real_hm_cust_path))
+    else:
+        df_raw_cust = None
 
     real_vis_path = cfg.get_raw_file_path("visuelle_sales")
     if Path(real_vis_path).exists():
@@ -114,9 +189,11 @@ else:
     else:
         df_raw_vis = spark.table(table_vis_fqn)
 
-print(f"Filas leídas en Transacciones : {df_raw_tx.count():,}")
-print(f"Filas leídas en Artículos     : {df_raw_art.count():,}")
-print(f"Filas leídas en VISUELLE      : {df_raw_vis.count():,}")
+print(f"Filas leídas en Transacciones H&M : {df_raw_tx.count():,}")
+print(f"Filas leídas en Artículos H&M     : {df_raw_art.count():,}")
+if df_raw_cust is not None:
+    print(f"Filas leídas en Clientes H&M      : {df_raw_cust.count():,}")
+print(f"Filas leídas en VISUELLE          : {df_raw_vis.count():,}")
 
 # COMMAND ----------
 
@@ -190,6 +267,15 @@ df_bronze_tx = (
 df_bronze_tx.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(table_tx_fqn)
 df_raw_art.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(table_art_fqn)
 df_raw_vis.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(table_vis_fqn)
+
+if df_raw_cust is not None:
+    df_bronze_cust = (
+        anonymize_sensitive_identifiers(df_raw_cust, id_col="customer_id", salt=cfg.governance_salt)
+        .withColumn("ingestion_timestamp", F.current_timestamp())
+        .withColumn("data_source", F.lit("HM_KAGGLE_FULL"))
+    )
+    df_bronze_cust.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(table_cust_fqn)
+    print(f"Tabla `bronze_hm_customers` persistida y anonimizada: {spark.table(table_cust_fqn).count():,} clientes.")
 
 # Registro explícito de metadatos de contaminación sobre la línea base de control M5
 table_m5_fqn = cfg.get_table_fqn("bronze_m5_control")
