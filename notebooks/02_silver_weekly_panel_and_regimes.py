@@ -275,22 +275,23 @@ if not cfg.use_smoke_test:
         .when(F.col("demand_regime") == "Erratic", F.lit(target_quotas["Erratic"]))
         .otherwise(F.lit(target_quotas["Cold_Start"]))
     )
-    selected_hm_series = (
+    selected_pd = (
         df_ranked_regimes.filter(F.col("regime_rank") <= quota_expr)
         .select("article_id", "sales_channel_id")
-        .cache()
+        .toPandas()
     )
-    n_selected = selected_hm_series.count()
-    if n_selected < max_series:
-        rem = max_series - n_selected
-        extra_series = (
+    if len(selected_pd) < max_series:
+        rem = max_series - len(selected_pd)
+        extra_pd = (
             df_ranked_regimes.filter(F.col("regime_rank") > quota_expr)
             .orderBy(F.col("n_positive_periods").desc())
             .limit(rem)
             .select("article_id", "sales_channel_id")
+            .toPandas()
         )
-        selected_hm_series = selected_hm_series.unionByName(extra_series).distinct().cache()
-    print(f"Series reales de H&M seleccionadas en el panel estratificado de evaluación: {selected_hm_series.count():,}")
+        selected_pd = pd.concat([selected_pd, extra_pd], ignore_index=True).drop_duplicates()
+    print(f"Series reales de H&M seleccionadas en el panel estratificado de evaluación: {len(selected_pd):,}")
+    selected_hm_series = spark.createDataFrame(selected_pd)
     df_balanced = df_balanced_all.join(selected_hm_series, on=["article_id", "sales_channel_id"], how="inner")
 else:
     df_balanced = df_balanced_all
