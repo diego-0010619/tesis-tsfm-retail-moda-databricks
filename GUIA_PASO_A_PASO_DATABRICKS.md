@@ -40,7 +40,7 @@ git add .
 git commit -m "feat: arquitectura Medallion, paquete fashion_tsfm y 7 notebooks Databricks para tesis UPB"
 
 # 5. Vincular tu carpeta local con el repositorio remoto en GitHub
-git remote add origin https://github.com/TU_USUARIO/tesis-tsfm-retail-moda-databricks.git
+git remote add origin https://github.com/diego-0010619/tesis-tsfm-retail-moda-databricks.git
 
 # 6. Subir (push) los archivos a GitHub
 git push -u origin main
@@ -110,7 +110,7 @@ Cuando ingresas a tu cuenta de **Databricks** (por ejemplo, en [Databricks Free 
 3. En la esquina superior derecha de esa vista, haz clic en el botón azul **`Create`** y selecciona **`Git folder`** (en versiones anteriores llamado *Repo*).
 4. Se abrirá una ventana emergente con los siguientes campos:
    * **Git repository URL:** Pega la URL de tu repositorio de GitHub:  
-     `https://github.com/TU_USUARIO/tesis-tsfm-retail-moda-databricks.git`
+     `https://github.com/diego-0010619/tesis-tsfm-retail-moda-databricks.git`
    * **Git provider:** Se seleccionará automáticamente `GitHub`.
    * **Git folder name:** Se llenará automáticamente como `tesis-tsfm-retail-moda-databricks`.
 5. Haz clic en el botón azul **`Create Git folder`**.
