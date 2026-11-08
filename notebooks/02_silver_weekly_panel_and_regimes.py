@@ -264,7 +264,7 @@ if not cfg.use_smoke_test:
         "Cold_Start": int(round(max_series * 0.10)),
     }
     w_regime_rank = Window.partitionBy("demand_regime").orderBy(
-        F.col("n_positive_periods").desc(),
+        F.col("n_positive_weeks").desc(),
         F.xxhash64(F.col("article_id"), F.col("sales_channel_id"), F.lit(cfg.random_seed)),
     )
     df_ranked_regimes = df_full_hm_regimes.withColumn("regime_rank", F.row_number().over(w_regime_rank))
@@ -284,7 +284,7 @@ if not cfg.use_smoke_test:
         rem = max_series - len(selected_pd)
         extra_pd = (
             df_ranked_regimes.filter(F.col("regime_rank") > quota_expr)
-            .orderBy(F.col("n_positive_periods").desc())
+            .orderBy(F.col("n_positive_weeks").desc())
             .limit(rem)
             .select("article_id", "sales_channel_id")
             .toPandas()
