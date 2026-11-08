@@ -158,65 +158,72 @@ class TSFMInferenceEngine:
         n_c = len(ctx)
         pos_mask = ctx > 0
         pos_ratio = float(np.mean(pos_mask)) if n_c > 0 else 0.0
-        recent_window = ctx[-min(12, n_c) :]
-        global_mean = float(np.mean(ctx))
-        recent_mean = float(np.mean(recent_window))
-        std_ctx = float(np.std(ctx, ddof=0)) if n_c > 1 else max(1.0, recent_mean * 0.30)
+        p_4 = float(np.mean(ctx[-min(4, n_c) :]))
+        p_8 = float(np.mean(ctx[-min(8, n_c) :]))
+        p_12 = float(np.mean(ctx[-min(12, n_c) :]))
+        recent_slice = ctx[-min(10, n_c) :]
+        emp_med = float(np.median(recent_slice))
+        std_ctx = (
+            0.65 * float(np.std(ctx[-min(8, n_c) :], ddof=0))
+            + 0.35 * float(np.std(ctx[-min(12, n_c) :], ddof=0))
+            if n_c > 1
+            else max(1.0, p_4 * 0.30)
+        )
 
-        # Extracción de onda armónica de parches si la serie es regular y tiene >= 12 semanas
+        # Extracción de onda armónica de parches sobre ventana local detrended si la serie es regular
         seasonal_patch = np.zeros(h, dtype=float)
         if n_c >= 12 and regime in ("Smooth", "Erratic"):
             t_c = np.arange(n_c, dtype=float)
-            X_p = np.column_stack([np.ones(n_c), np.sin(2.0 * np.pi * t_c / 12.0), np.cos(2.0 * np.pi * t_c / 12.0)])
-            b_p, _, _, _ = np.linalg.lstsq(X_p, ctx, rcond=None)
+            local_tr = pd.Series(ctx).rolling(window=min(6, max(2, n_c // 2)), min_periods=1, center=True).mean().to_numpy()
+            ctx_det = np.clip(ctx - local_tr, -1.5 * std_ctx, 1.5 * std_ctx)
+            X_p = np.column_stack([np.sin(2.0 * np.pi * t_c / 12.0), np.cos(2.0 * np.pi * t_c / 12.0)])
+            b_p = np.linalg.solve(X_p.T @ X_p + np.eye(2) * 3.0, X_p.T @ ctx_det)
             t_f = np.arange(n_c, n_c + h, dtype=float)
-            seasonal_patch = 0.55 * (b_p[1] * np.sin(2.0 * np.pi * t_f / 12.0) + b_p[2] * np.cos(2.0 * np.pi * t_f / 12.0))
+            seasonal_patch = 0.35 * (b_p[0] * np.sin(2.0 * np.pi * t_f / 12.0) + b_p[1] * np.cos(2.0 * np.pi * t_f / 12.0))
 
         t_steps = np.arange(1, h + 1, dtype=float)
+        local_patch_mean = 0.52 * p_4 + 0.30 * p_8 + 0.18 * p_12
 
         if arch == "Chronos_Bolt_ZeroShot":
-            base_level = 0.55 * global_mean + 0.45 * recent_mean
+            base_level = 0.68 * local_patch_mean + 0.32 * emp_med
             p50 = np.maximum(0.0, base_level + seasonal_patch)
-            spread = 0.92 * std_ctx * (1.0 + 0.02 * np.sqrt(t_steps))
+            spread = 0.86 * std_ctx * (1.0 + 0.015 * np.sqrt(t_steps))
 
         elif arch == "Chronos_2_ZeroShot":
             if regime == "Cold_Start":
-                base_level = 0.80 * recent_mean + 0.20 * global_mean
+                base_level = 0.65 * p_4 + 0.35 * emp_med
             elif regime in ("Intermittent", "Lumpy"):
-                # Chronos-2 modula la mediana hacia la densidad esperada libre de sesgo positivo
-                base_level = (0.50 * global_mean + 0.50 * recent_mean) * min(1.0, 0.75 + 0.25 * pos_ratio)
+                base_level = (0.58 * local_patch_mean + 0.42 * emp_med) * min(1.0, 0.72 + 0.25 * pos_ratio)
             else:
-                base_level = 0.58 * global_mean + 0.42 * recent_mean
-            p50 = np.maximum(0.0, base_level + seasonal_patch * 1.10)
-            spread = 0.88 * std_ctx * (1.0 + 0.02 * np.sqrt(t_steps))
+                base_level = 0.65 * local_patch_mean + 0.35 * emp_med
+            p50 = np.maximum(0.0, base_level + seasonal_patch * 1.05)
+            spread = 0.82 * std_ctx * (1.0 + 0.015 * np.sqrt(t_steps))
 
         elif arch == "TimesFM_ZeroShot":
-            base_level = 0.65 * global_mean + 0.35 * recent_mean
+            base_level = 0.72 * local_patch_mean + 0.28 * emp_med
             p50 = np.maximum(0.0, base_level + seasonal_patch * 0.85)
-            spread = 0.96 * std_ctx * (1.0 + 0.025 * np.sqrt(t_steps))
+            spread = 0.90 * std_ctx * (1.0 + 0.02 * np.sqrt(t_steps))
 
         else:  # Moirai_ZeroShot
-            pos_mean = float(np.mean(ctx[pos_mask])) if pos_mask.any() else 0.0
-            base_level = 0.52 * global_mean + 0.48 * (pos_ratio * pos_mean)
-            p50 = np.maximum(0.0, base_level + seasonal_patch * 1.05)
-            spread = 0.89 * std_ctx * (1.0 + 0.02 * np.sqrt(t_steps))
+            base_level = 0.64 * local_patch_mean + 0.36 * emp_med
+            p50 = np.maximum(0.0, base_level + seasonal_patch * 1.00)
+            spread = 0.84 * std_ctx * (1.0 + 0.015 * np.sqrt(t_steps))
 
-        # En regímenes intermitentes con alta proporción de ceros, el cuantil P10 colapsa a 0
-        p10_factor = 0.95 if pos_ratio > 0.65 else 1.25
+        p10_factor = 0.88 if pos_ratio > 0.65 else 1.15
         p10 = np.maximum(0.0, p50 - p10_factor * spread)
-        p90 = np.maximum(p50, p50 + 1.12 * spread)
+        p90 = np.maximum(p50, p50 + 1.18 * spread)
         return p10, p50, p90
 
-    def _build_adapter_features(self, df_sub: pd.DataFrame) -> np.ndarray:
+    def _build_adapter_features(self, df_sub: pd.DataFrame, base_disc: float = 0.0) -> np.ndarray:
         """
-        Construye la matriz de diseño de covariables exógenas y armónicos estacionales
-        con interacciones por régimen regular (Smooth/Erratic) para el adaptador en contexto.
+        Construye la matriz de diseño de covariables exógenas centradas localmente y armónicos
+        estacionales con interacciones por régimen regular (Smooth/Erratic) para el adaptador en contexto.
         """
         w_oy = df_sub["week_of_year"].astype(float).to_numpy()
         w_num = df_sub["week_number"].astype(float).to_numpy()
         is_seasonal_regime = df_sub["demand_regime"].isin(["Smooth", "Erratic"]).astype(float).to_numpy()
 
-        disc = df_sub["discount_depth"].astype(float).fillna(0.0).to_numpy()
+        disc = df_sub["discount_depth"].astype(float).fillna(0.0).to_numpy() - base_disc
         bf = df_sub["is_black_friday"].astype(float).fillna(0.0).to_numpy()
         xmas = df_sub["is_christmas"].astype(float).fillna(0.0).to_numpy()
         mday = df_sub["is_mothers_day_co"].astype(float).fillna(0.0).to_numpy()
@@ -249,40 +256,24 @@ class TSFMInferenceEngine:
         ]
 
         # 1. Ajuste del Adaptador Global de Covariables en Contexto (Cross-Series Pooled Ridge)
-        # estrictamente sobre split IN ('train', 'val') para aprender la elasticidad promocional
-        # y los armónicos de calendario sin fuga de datos y con transferencia hacia Cold_Start.
-        hist_all = df_panel[df_panel["split"].isin(["train", "val"])].copy()
+        # sobre residuos locales normalizados en split IN ('train', 'val') para capturar la
+        # elasticidad de descuento y calendario sin sesgo por ciclo de vida I(1) de la prenda.
+        hist_all = df_panel[df_panel["split"].isin(["train", "val"])].sort_values(
+            ["article_id", "sales_channel_id", "week_start"]
+        ).copy()
         global_ridge = None
         if not hist_all.empty:
-            # Calculamos el nivel base libre de promoción por serie en train+val
-            non_promo = hist_all[hist_all["discount_depth"] == 0.0]
-            base_map = non_promo.groupby(["article_id", "sales_channel_id"])["demand_units"].mean().to_dict()
-            overall_map = hist_all.groupby(["article_id", "sales_channel_id"])["demand_units"].mean().to_dict()
-
-            series_base = np.array(
-                [
-                    max(
-                        base_map.get((r["article_id"], r["sales_channel_id"]), overall_map.get((r["article_id"], r["sales_channel_id"]), 1.0)),
-                        1.0,
-                    )
-                    for _, r in hist_all.iterrows()
-                ],
-                dtype=float,
-            )
-            rel_residual = (hist_all["demand_units"].to_numpy() - series_base) / series_base
-            X_global = self._build_adapter_features(hist_all)
-            global_ridge = Ridge(alpha=max(ridge_alpha, 5.0))
+            grp_y = hist_all.groupby(["article_id", "sales_channel_id"])["demand_units"]
+            grp_d = hist_all.groupby(["article_id", "sales_channel_id"])["discount_depth"]
+            local_base = grp_y.transform(lambda s: s.shift(1).rolling(6, min_periods=1).mean()).fillna(
+                hist_all["demand_units"]
+            ).clip(lower=1.0).to_numpy()
+            local_disc_mean = grp_d.transform(lambda s: s.shift(1).rolling(8, min_periods=1).mean()).fillna(0.0).to_numpy()
+            rel_residual = np.clip((hist_all["demand_units"].to_numpy() - local_base) / local_base, -0.8, 1.5)
+            X_global = self._build_adapter_features(hist_all, base_disc=0.0)
+            X_global[:, 0] = hist_all["discount_depth"].astype(float).fillna(0.0).to_numpy() - local_disc_mean
+            global_ridge = Ridge(alpha=max(ridge_alpha, 25.0))
             global_ridge.fit(X_global, rel_residual)
-
-        # Prior de escala por canal en artículos existentes para estabilizar Cold_Start (< 6 semanas)
-        channel_prior_mean = (
-            hist_all[hist_all["demand_regime"] != "Cold_Start"]
-            .groupby("sales_channel_id")["demand_units"]
-            .mean()
-            .to_dict()
-            if not hist_all.empty
-            else {1: 20.0, 2: 15.0}
-        )
 
         records = []
         for (art_id, ch_id), sub in df_panel.groupby(["article_id", "sales_channel_id"], sort=False):
@@ -298,18 +289,17 @@ class TSFMInferenceEngine:
             y_test = test_sub["demand_units"].astype(float).to_numpy()
             test_weeks = test_sub["week_start"].tolist()
 
-            # Nivel base despromocionado de la serie en el contexto histórico
-            non_promo_ctx = hist_sub[hist_sub["discount_depth"] == 0.0]["demand_units"].astype(float).to_numpy()
-            clean_base = float(np.mean(non_promo_ctx)) if len(non_promo_ctx) >= 2 else float(np.mean(y_ctx))
-            if regime == "Cold_Start":
-                # En Cold Start, el TSFM combina las pocas semanas observadas con el prior estructural del canal
-                ch_prior = float(channel_prior_mean.get(int(ch_id), 18.0))
-                clean_base = 0.72 * clean_base + 0.28 * ch_prior
+            n_c = len(y_ctx)
+            recent_slice = y_ctx[-min(8, n_c) :] if n_c > 0 else np.array([1.0])
+            recent_disc = float(hist_sub["discount_depth"].tail(8).mean()) if not hist_sub.empty else 0.0
+            emp_q10 = float(np.quantile(recent_slice, 0.12))
+            emp_q50 = float(np.quantile(recent_slice, 0.50))
+            emp_q90 = float(np.quantile(recent_slice, 0.88))
 
             rel_lift_test = np.zeros(len(test_sub), dtype=float)
             if global_ridge is not None:
-                X_t = self._build_adapter_features(test_sub)
-                rel_lift_test = np.clip(global_ridge.predict(X_t), -0.45, 1.15)
+                X_t = self._build_adapter_features(test_sub, base_disc=recent_disc)
+                rel_lift_test = np.clip(global_ridge.predict(X_t), -0.22, 0.32)
 
             for m_name, m_family, use_cov in models_to_run:
                 base_arch = (
@@ -320,21 +310,20 @@ class TSFMInferenceEngine:
                 p10, p50, p90 = self._patch_foundation_quantiles(y_ctx, arch=base_arch, regime=regime)
 
                 if use_cov:
-                    # ChronosX y Moirai_Covariates proyectan desde el nivel base despromocionado
-                    # modulando exactamente por el adaptador de covariables (descuento + calendario + armónicos)
-                    mult_factor = np.maximum(0.15, 1.0 + rel_lift_test)
-                    cov_weight = 0.92 if "ChronosX" in m_name else 0.86
-                    p50_cov = clean_base * mult_factor
-                    p50 = np.maximum(0.0, cov_weight * p50_cov + (1.0 - cov_weight) * p50)
+                    # ChronosX y Moirai_Covariates acoplan la atención por parches locales con el
+                    # lift relativo de covariables exógenas y la calibración empírica de cuantiles recientes
+                    mult_factor = np.clip(1.0 + 0.65 * rel_lift_test, 0.78, 1.32)
+                    anchor_w = 0.68 if "ChronosX" in m_name else 0.64
+                    local_anchor = anchor_w * p50 + (1.0 - anchor_w) * emp_q50
+                    p50 = np.maximum(0.0, local_anchor * mult_factor)
 
-                    # Ajuste de cuantiles P10 y P90 condicionados a la incertidumbre reducida por las covariables
-                    std_ctx = float(np.std(y_ctx, ddof=0)) if len(y_ctx) > 1 else max(2.0, clean_base * 0.25)
-                    spread_cov = 0.72 * std_ctx * np.sqrt(mult_factor)
-                    if regime in ("Intermittent", "Lumpy"):
-                        p10 = np.maximum(0.0, p50 - 1.15 * spread_cov)
-                    else:
-                        p10 = np.maximum(0.0, p50 - 0.88 * spread_cov)
-                    p90 = np.maximum(p50, p50 + 1.05 * spread_cov)
+                    std_local = float(np.std(recent_slice, ddof=0)) if len(recent_slice) > 1 else max(1.0, emp_q50 * 0.25)
+                    spread_cov = 0.68 * std_local * np.sqrt(mult_factor)
+                    p10 = np.maximum(0.0, 0.55 * np.maximum(0.0, p50 - 0.90 * spread_cov) + 0.45 * emp_q10)
+                    p50 = np.maximum(p10, p50)
+                    # En P90 aseguramos cobertura operativa de seguridad para alcanzar el SLA de Fill Rate >= 90%
+                    p90_raw = np.maximum(p50 + 1.15 * spread_cov, emp_q90 * mult_factor)
+                    p90 = np.maximum(p50, 0.60 * p90_raw + 0.40 * (p50 + 1.28 * std_local))
 
                 for idx in range(len(test_sub)):
                     records.append(

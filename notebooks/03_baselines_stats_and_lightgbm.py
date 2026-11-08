@@ -180,38 +180,43 @@ def run_econometric_diagnostics_and_arima_sarima(
     # 3. Fuerza Estacional F_S (Wang, Smith & Hyndman, 2006) y ACF en rezago s=12
     t_idx = np.arange(n, dtype=float)
     s_per = seasonal_period
-    y_wins = np.clip(y, 0.0, np.quantile(y, 0.82))
+    y_wins = np.clip(y, 0.0, np.quantile(y, 0.85))
+    # Tendencia móvil local para aislar la componente estacional de la curva de ciclo de vida en H&M
+    rolling_trend = pd.Series(y_wins).rolling(window=min(8, max(2, n // 2)), min_periods=1, center=True).mean().to_numpy()
+    detrended = y_wins - rolling_trend
+
     X_harm = np.column_stack(
         [
-            np.ones(n),
             np.sin(2.0 * np.pi * t_idx / s_per),
             np.cos(2.0 * np.pi * t_idx / s_per),
             np.sin(2.0 * np.pi * t_idx / 52.0),
             np.cos(2.0 * np.pi * t_idx / 52.0),
         ]
     )
-    reg_mat = np.eye(X_harm.shape[1]) * 3.0
-    reg_mat[0, 0] = 0.0
-    b_harm = np.linalg.solve(X_harm.T @ X_harm + reg_mat, X_harm.T @ y_wins)
-    seasonal_comp = X_harm[:, 1:] @ b_harm[1:]
-    detrended = y - float(b_harm[0])
+    reg_mat = np.eye(X_harm.shape[1]) * 4.0
+    b_harm = np.linalg.solve(X_harm.T @ X_harm + reg_mat, X_harm.T @ detrended)
+    seasonal_comp = X_harm @ b_harm
     remainder = detrended - seasonal_comp
     var_detrended = float(np.var(detrended))
     var_rem = float(np.var(remainder))
     seasonal_strength_fs = float(max(0.0, min(1.0, 1.0 - (var_rem / max(var_detrended, 1e-6)))))
 
-    if n > s_per and float(np.std(y)) > 1e-6:
-        y_centered = y - float(np.mean(y))
+    if n > s_per and float(np.std(detrended)) > 1e-6:
+        d_centered = detrended - float(np.mean(detrended))
         acf_lag12 = float(
-            np.sum(y_centered[s_per:] * y_centered[:-s_per]) / max(np.sum(y_centered**2), 1e-6)
+            np.sum(d_centered[s_per:] * d_centered[:-s_per]) / max(np.sum(d_centered**2), 1e-6)
         )
     else:
         acf_lag12 = 0.0
 
-    # 4. Estimación de ARIMA(1, d, 1) estabilizado con reversión al nivel local
-    mu_y = 0.65 * float(np.mean(y)) + 0.35 * float(np.mean(y[-min(12, n) :]))
-    w = y - mu_y
-    phi_1 = float(np.clip(np.sum(w[1:] * w[:-1]) / max(np.sum(w[:-1] ** 2), 1e-6), -0.55, 0.55))
+    # 4. Estimación de ARIMA(1, d, 1) anclado en el nivel local reciente (consistente con series I(1) de moda)
+    rec_4 = float(np.mean(y[-min(4, n) :]))
+    rec_8 = float(np.mean(y[-min(8, n) :]))
+    rec_12 = float(np.mean(y[-min(12, n) :]))
+    mu_y = 0.52 * rec_4 + 0.30 * rec_8 + 0.18 * rec_12
+
+    w = y - rolling_trend
+    phi_1 = float(np.clip(np.sum(w[1:] * w[:-1]) / max(np.sum(w[:-1] ** 2), 1e-6), -0.45, 0.45))
     resid_arima = w[1:] - phi_1 * w[:-1]
     nw = len(resid_arima)
 
@@ -220,12 +225,13 @@ def run_econometric_diagnostics_and_arima_sarima(
     arima_aic = float(nw * np.log(sigma2_arima) + 2.0 * k_arima)
     arima_bic = float(nw * np.log(sigma2_arima) + k_arima * np.log(max(nw, 2)))
 
-    arima_preds = np.array([max(0.0, mu_y + (phi_1 ** (step + 1)) * w[-1]) for step in range(horizon)])
+    arima_preds = np.array(
+        [max(0.0, mu_y + (phi_1 ** (step + 1)) * (y_wins[-1] - mu_y) * 0.5) for step in range(horizon)]
+    )
 
     # 5. Estimación de SARIMA(1, d, 1)(1, 0, 1)_{12} con componente estacional armónico/multiplicativo
     zero_ratio = float(np.mean(y == 0))
-    sarima_base = float(b_harm[0]) if zero_ratio <= 0.30 else mu_y
-    w_sar = (y - seasonal_comp) - sarima_base
+    w_sar = w - seasonal_comp
     resid_sarima = w_sar[1:] - phi_1 * w_sar[:-1]
     sigma2_sarima = max(float(np.mean(resid_sarima**2)), 0.25)
     k_sarima = 6  # (phi_1, theta_1, Phi_1, Theta_1 y armónicos estacionales)
@@ -241,20 +247,21 @@ def run_econometric_diagnostics_and_arima_sarima(
             np.cos(2.0 * np.pi * t_fut / 52.0),
         ]
     )
-    seasonal_fut = X_harm_fut @ b_harm[1:]
-    # En series con alta proporción de ceros (>30%), el rezago estacional s=12 proyecta ecos espurios de impulsos pasados
-    s_echo = (
-        np.array([y[-s_per + (step % s_per)] - mu_y for step in range(horizon)])
-        if (n >= s_per and zero_ratio > 0.30)
-        else np.zeros(horizon)
-    )
-    sarima_preds = np.maximum(
-        0.0,
-        sarima_base
-        + (phi_1 ** np.arange(1, horizon + 1)) * (y_wins[-1] - sarima_base)
-        + seasonal_fut
-        + 0.35 * s_echo,
-    )
+    seasonal_fut = X_harm_fut @ b_harm
+    # En series con alta proporción de ceros (>15%) o muestra corta de arranque en frío (n < 20),
+    # forzar el rezago estacional s=12 proyecta ecos espurios de impulsos o del lanzamiento inicial
+    if n < 20 or zero_ratio > 0.15:
+        s_echo = (
+            np.array([y[max(0, len(y) - s_per + (step % min(s_per, len(y))))] - mu_y for step in range(horizon)])
+        )
+        sarima_preds = np.maximum(0.0, arima_preds + 0.45 * seasonal_fut + 0.30 * s_echo)
+    else:
+        sarima_preds = np.maximum(
+            0.0,
+            (0.92 * mu_y + 0.08 * float(np.median(y[-min(8, n) :])))
+            + (phi_1 ** np.arange(1, horizon + 1)) * (y_wins[-1] - mu_y) * 0.35
+            + 0.40 * seasonal_fut,
+        )
 
     # 6. Prueba de Ljung-Box Q(m=8) de Ruido Blanco en los residuos
     def _ljung_box_q(res: np.ndarray, lags: int = 8) -> float:
@@ -346,8 +353,9 @@ def fit_predict_statistical_baselines_udf(pdf: pd.DataFrame) -> pd.DataFrame:
     if len(y_hist) == 0:
         y_hist = np.array([0.0], dtype=float)
 
-    # Desviación estándar residual empírica para cuantiles P10 y P90 (z_0.90 = 1.2816)
-    resid_std = float(np.std(y_hist, ddof=0)) if len(y_hist) > 1 else max(1.0, float(np.mean(y_hist)) * 0.5)
+    # Desviación estándar residual local (ventana reciente de 10 semanas) para cuantiles P10 y P90 (z_0.90 = 1.2816)
+    recent_slice = y_hist[-min(10, len(y_hist)) :]
+    resid_std = float(np.std(recent_slice, ddof=0)) if len(recent_slice) > 1 else max(1.0, float(np.mean(recent_slice)) * 0.4)
     resid_std = max(resid_std, 0.5)
     z90 = 1.28155
 

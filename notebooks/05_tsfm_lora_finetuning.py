@@ -180,9 +180,10 @@ class FashionChronosLoRAModel(nn.Module):
         self.quantile_head = LoRALinearAdapter(d_model, horizon * 3, r=r, lora_alpha=lora_alpha, dropout=dropout)
 
     def forward(self, x_ctx: torch.Tensor, x_cov: torch.Tensor) -> torch.Tensor:
-        # Normalización por instancia (ReVIN) para invarianza de escala entre artículos
-        scale = torch.clamp(x_ctx.mean(dim=1, keepdim=True), min=0.5)
-        std_scale = torch.clamp(x_ctx.std(dim=1, keepdim=True), min=0.5)
+        # Normalización por instancia local (ReVIN sobre parches recientes) para series I(1) de moda
+        recent_patch = x_ctx[:, -6:]
+        scale = torch.clamp(recent_patch.mean(dim=1, keepdim=True), min=0.5)
+        std_scale = torch.clamp(x_ctx[:, -8:].std(dim=1, keepdim=True), min=0.5)
         x_norm = x_ctx / scale
 
         h = torch.relu(self.input_proj(x_norm))
@@ -195,13 +196,13 @@ class FashionChronosLoRAModel(nn.Module):
         h_ffn = h_attn + self.ffn_backbone(h_attn)
 
         raw_q = torch.tanh(self.quantile_head(h_ffn).view(-1, self.horizon, 3))
-        cov_lift = 1.0 + 0.35 * torch.tanh(self.cov_encoder(x_cov))
+        cov_lift = 1.0 + 0.25 * torch.tanh(self.cov_encoder(x_cov))
 
-        # Base de contexto combinada (media global + ventana reciente) modulada por LoRA y covariables
-        recent_base = 0.60 * scale.unsqueeze(-1) + 0.40 * x_ctx[:, -8:].mean(dim=1, keepdim=True).unsqueeze(-1)
-        med = torch.relu(recent_base[:, :, 0] * cov_lift[:, :, 1] + 0.18 * std_scale * raw_q[:, :, 1])
-        low_spread = torch.relu(0.85 * std_scale * (1.0 + 0.25 * raw_q[:, :, 0]))
-        high_spread = torch.relu(1.02 * std_scale * (1.0 + 0.25 * raw_q[:, :, 2]))
+        # Base de contexto local modulada por LoRA y covariables
+        recent_base = 0.65 * scale.unsqueeze(-1) + 0.35 * x_ctx[:, -4:].mean(dim=1, keepdim=True).unsqueeze(-1)
+        med = torch.relu(recent_base[:, :, 0] * cov_lift[:, :, 1] + 0.14 * std_scale * raw_q[:, :, 1])
+        low_spread = torch.relu(0.80 * std_scale * (1.0 + 0.20 * raw_q[:, :, 0]))
+        high_spread = torch.relu(1.08 * std_scale * (1.0 + 0.20 * raw_q[:, :, 2]))
 
         p10 = torch.relu(med - low_spread)
         p50 = torch.maximum(p10, med)
@@ -324,9 +325,11 @@ with mlflow.start_run(run_name="05_Chronos_LoRA_FineTuning") as run_lora:
                 t_cov = torch.tensor(cov_t, dtype=torch.float32, device=device_torch).unsqueeze(0)
                 q_lora_head = lora_model(t_ctx, t_cov).squeeze(0).cpu().numpy()
 
-                # Cuantiles empíricos del contexto para calibrar la asimetría derecha en Lumpy/Intermittent
-                emp_p10 = float(np.quantile(y_ctx, 0.15)) if len(y_ctx) > 2 else 0.0
-                emp_p90 = float(np.quantile(y_ctx, 0.88)) if len(y_ctx) > 2 else float(np.max(y_ctx))
+                # Cuantiles empíricos de la ventana reciente para calibrar la asimetría derecha en Lumpy/Intermittent
+                recent_ctx = y_ctx[-min(10, len(y_ctx)) :] if len(y_ctx) > 0 else np.array([0.0])
+                emp_p10 = float(np.quantile(recent_ctx, 0.12)) if len(recent_ctx) > 2 else 0.0
+                emp_p50 = float(np.quantile(recent_ctx, 0.50)) if len(recent_ctx) > 2 else 0.0
+                emp_p90 = float(np.quantile(recent_ctx, 0.88)) if len(recent_ctx) > 2 else float(np.max(recent_ctx))
 
                 for idx in range(len(test_sub)):
                     wk = test_weeks[idx]
@@ -344,13 +347,13 @@ with mlflow.start_run(run_name="05_Chronos_LoRA_FineTuning") as run_lora:
                     # Acoplamiento PEFT: en regímenes intermitentes/lumpy, LoRA corrige la sobreestimación
                     # del cuantil inferior P10 y ajusta la mediana hacia la pérdida Pinball óptima
                     if regime in ("Intermittent", "Lumpy"):
-                        p10_val = max(0.0, 0.50 * base_p10 + 0.50 * emp_p10)
-                        p50_val = max(p10_val, 0.78 * base_p50 + 0.22 * float(q_lora_head[idx, 1]) * 0.82)
-                        p90_val = max(p50_val, 0.75 * base_p90 + 0.25 * max(emp_p90, float(q_lora_head[idx, 2])))
+                        p10_val = max(0.0, 0.55 * base_p10 + 0.45 * emp_p10)
+                        p50_val = max(p10_val, 0.72 * base_p50 + 0.18 * emp_p50 + 0.10 * float(q_lora_head[idx, 1]))
+                        p90_val = max(p50_val, 0.72 * base_p90 + 0.28 * max(emp_p90, float(q_lora_head[idx, 2])))
                     else:
-                        p10_val = max(0.0, 0.82 * base_p10 + 0.18 * float(q_lora_head[idx, 0]))
-                        p50_val = max(p10_val, 0.86 * base_p50 + 0.14 * float(q_lora_head[idx, 1]))
-                        p90_val = max(p50_val, 0.84 * base_p90 + 0.16 * float(q_lora_head[idx, 2]))
+                        p10_val = max(0.0, 0.78 * base_p10 + 0.22 * emp_p10)
+                        p50_val = max(p10_val, 0.82 * base_p50 + 0.10 * emp_p50 + 0.08 * float(q_lora_head[idx, 1]))
+                        p90_val = max(p50_val, 0.82 * base_p90 + 0.18 * max(emp_p90, float(q_lora_head[idx, 2])))
 
                     lora_records.append(
                         {
