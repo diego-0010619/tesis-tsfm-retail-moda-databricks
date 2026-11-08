@@ -1,0 +1,90 @@
+# =============================================================================
+# resources/tesis_fashion_pipeline.job.yml - Lakeflow Job Serverless (DAG Completo)
+# Orquesta de principio a fin los 7 Notebooks de la Arquitectura Medallion
+# =============================================================================
+
+resources:
+  jobs:
+    tesis_fashion_medallion_job:
+      name: "[${bundle.target}] Tesis UPB - Pipeline TSFM Retail Moda (Medallion)"
+      description: "Orquestación extremo a extremo (Bronze -> Silver -> Gold) para evaluación de Modelos Fundacionales de Series de Tiempo en Retail de Moda."
+      # STANDARD optimiza el costo de cómputo para ejecuciones batch experimentales sin SLA de baja latencia
+      performance_target: STANDARD
+
+      tags:
+        aidevkit_project: "ai-dev-kit"
+        project: "tesis-tsfm-retail-moda-upb"
+        research_group: "GIDATIC"
+
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema
+          default: ${var.schema}
+        - name: use_smoke_test
+          default: ${var.use_smoke_test}
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - "pyyaml==6.0.2"
+              - "psutil==5.9.8"
+              - "lightgbm==4.5.0"
+              - "statsforecast==1.7.8"
+              - "mlforecast==0.13.4"
+              - "utilsforecast==0.2.4"
+              - "chronos-forecasting==1.3.0"
+              - "peft==0.12.0"
+              - "accelerate==0.33.0"
+
+      tasks:
+        - task_key: setup_and_smoke_test
+          notebook_task:
+            notebook_path: ../notebooks/00_setup_and_smoke_test_generator.py
+          environment_key: default
+
+        - task_key: bronze_ingestion_ley1581
+          depends_on:
+            - task_key: setup_and_smoke_test
+          notebook_task:
+            notebook_path: ../notebooks/01_bronze_ingestion_hm_visuelle.py
+          environment_key: default
+
+        - task_key: silver_weekly_panel_regimes
+          depends_on:
+            - task_key: bronze_ingestion_ley1581
+          notebook_task:
+            notebook_path: ../notebooks/02_silver_weekly_panel_and_regimes.py
+          environment_key: default
+
+        - task_key: gold_baselines_stats_lightgbm
+          depends_on:
+            - task_key: silver_weekly_panel_regimes
+          notebook_task:
+            notebook_path: ../notebooks/03_baselines_stats_and_lightgbm.py
+          environment_key: default
+
+        - task_key: gold_tsfm_zeroshot_covariates
+          depends_on:
+            - task_key: silver_weekly_panel_regimes
+          notebook_task:
+            notebook_path: ../notebooks/04_tsfm_zeroshot_and_covariates.py
+          environment_key: default
+
+        - task_key: gold_tsfm_lora_finetuning
+          depends_on:
+            - task_key: gold_tsfm_zeroshot_covariates
+          notebook_task:
+            notebook_path: ../notebooks/05_tsfm_lora_finetuning.py
+          environment_key: default
+
+        - task_key: gold_evaluation_decision_matrix
+          depends_on:
+            - task_key: gold_baselines_stats_lightgbm
+            - task_key: gold_tsfm_lora_finetuning
+          run_if: ALL_SUCCESS
+          notebook_task:
+            notebook_path: ../notebooks/06_gold_evaluation_and_decision_matrix.py
+          environment_key: default

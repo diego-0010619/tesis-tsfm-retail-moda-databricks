@@ -1,0 +1,82 @@
+# =============================================================================
+# .gitignore - Proyecto de Grado Maestría en Ciencia de Datos (UPB)
+# Modelos Fundacionales de Series de Tiempo en Retail de Moda (Databricks)
+# =============================================================================
+
+# --- Byte-compiled / cachés de Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Entornos virtuales ---
+.env
+.venv
+env/
+venv/
+ENV/
+.conda/
+
+# --- Datos crudos y pesados (se almacenan en Unity Catalog Volumes, NO en Git) ---
+*.csv
+*.parquet
+*.feather
+*.orc
+*.avro
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+data/
+raw_data/
+
+# --- Pesos de modelos PyTorch / Hugging Face / LoRA locales ---
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+*.onnx
+huggingface_cache/
+.cache/
+checkpoints/
+lora_weights/
+
+# --- Artefactos locales de Spark, Delta Lake y MLflow ---
+spark-warehouse/
+metastore_db/
+derby.log
+mlruns/
+mlartifacts/
+.databricks/
+
+# --- Salidas temporales de gráficas y reportes locales ---
+outputs/
+figures_tmp/
+
+# --- Archivos de sistema operativo y editores ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.ipynb_checkpoints/
+

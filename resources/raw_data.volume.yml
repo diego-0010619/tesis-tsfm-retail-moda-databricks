@@ -1,0 +1,12 @@
+# =============================================================================
+# resources/raw_data.volume.yml - Volumen Administrado en Unity Catalog
+# =============================================================================
+
+resources:
+  volumes:
+    raw_data_volume:
+      catalog_name: ${var.catalog}
+      schema_name: ${var.schema}
+      name: "raw_data"
+      volume_type: "MANAGED"
+      comment: "Volumen de datos crudos (H&M, VISUELLE, M5, Smoke Test) y figuras de tesis UPB"

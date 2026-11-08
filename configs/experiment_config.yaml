@@ -1,0 +1,209 @@
+# =============================================================================
+# Configuración Central de Experimentos - Tesis Maestría en Ciencia de Datos
+# Título: Modelos fundacionales de series de tiempo a escala Big Data para el
+#         pronóstico de demanda en el retail de moda
+# Autor:  Diego Alexander Sánchez Henao | Director: Ferney Orlando Amaya Fernández
+# Institución: Universidad Pontificia Bolivariana (UPB) - Grupo GIDATIC
+# =============================================================================
+
+project:
+  name: "tesis-tsfm-retail-moda-databricks"
+  title: "Modelos fundacionales de series de tiempo a escala Big Data para el pronóstico de demanda en el retail de moda"
+  author: "Diego Alexander Sánchez Henao"
+  advisor: "Ferney Orlando Amaya Fernández"
+  institution: "Universidad Pontificia Bolivariana (UPB) - Sede Medellín"
+  research_group: "GIDATIC (Categoría A - Minciencias)"
+  random_seed: 42
+  mlflow_experiment_name: "/Shared/tesis_tsfm_retail_moda_upb"
+
+# -----------------------------------------------------------------------------
+# 1. Gobernanza y Arquitectura Medallion en Unity Catalog
+# -----------------------------------------------------------------------------
+unity_catalog:
+  # En Databricks Free Edition / Serverless el catálogo predeterminado suele ser
+  # "workspace" o "main". El módulo src/fashion_tsfm/config.py detecta y hace
+  # fallback automático si el catálogo primario no existe.
+  catalog: "workspace"
+  fallback_catalogs:
+    - "main"
+    - "hive_metastore"
+  schema: "fashion_forecasting"
+  volume_name: "raw_data"
+  volume_path: "/Volumes/workspace/fashion_forecasting/raw_data"
+
+  tables:
+    # Capa Bronze (Datos crudos validados y anonimizados)
+    bronze_hm_transactions: "bronze_hm_transactions"
+    bronze_hm_articles: "bronze_hm_articles"
+    bronze_hm_customers: "bronze_hm_customers"
+    bronze_visuelle: "bronze_visuelle_coldstart"
+    bronze_m5_control: "bronze_m5_control"
+    bronze_local_retailer: "bronze_colombia_retailer"
+
+    # Capa Silver (Panel semanal balanceado, covariables y clasificación ADI/CV2)
+    silver_weekly_panel: "silver_fashion_weekly_panel"
+    silver_regime_catalog: "silver_regime_catalog"
+
+    # Capa Gold (Pronósticos, simulación de inventario, escalabilidad y matriz final)
+    gold_forecasts_baselines: "gold_forecasts_baselines"
+    gold_forecasts_tsfm: "gold_forecasts_tsfm"
+    gold_scaling_benchmarks: "gold_scaling_benchmarks"
+    gold_inventory_simulation: "gold_inventory_simulation"
+    gold_benchmark_summary: "gold_benchmark_summary"
+    gold_decision_matrix: "gold_decision_matrix"
+
+# -----------------------------------------------------------------------------
+# 2. Modo de Ejecución y Selección de Fuente de Datos
+# -----------------------------------------------------------------------------
+execution:
+  # true  -> Usa los datos sintéticos generados en el Notebook 00 (corre en ~3 min)
+  # false -> Procesa los archivos reales en /Volumes/.../raw_data/ (31.8M filas H&M)
+  use_smoke_test: true
+
+  # Dataset activo para el pipeline principal: "hm", "visuelle", "m5_control", "local_colombia"
+  active_dataset: "hm"
+
+  # Rutas relativas dentro del Volumen raw_data para datos reales
+  raw_files:
+    hm_transactions: "hm/transactions_train.csv"
+    hm_articles: "hm/articles.csv"
+    hm_customers: "hm/customers.csv"
+    visuelle_sales: "visuelle/visuelle_weekly_sales.csv"
+    m5_sales: "m5/sales_train_evaluation.csv"
+    local_colombia_sales: "local_colombia/ventas_semanales_sku.csv"
+
+# -----------------------------------------------------------------------------
+# 3. Parámetros del Generador Sintético (Smoke Test - Notebook 00)
+# -----------------------------------------------------------------------------
+smoke_test:
+  n_articles: 500          # 500 artículos x 2 canales = 1.000 series semanales
+  n_channels: 2            # 1 = Tienda Física, 2 = Canal Online
+  n_weeks: 60              # 60 semanas de historia total (38 train, 10 val, 12 test)
+  start_date: "2019-07-01" # Lunes inicial del calendario semanal
+  regime_proportions:
+    Smooth: 0.25
+    Erratic: 0.15
+    Intermittent: 0.30
+    Lumpy: 0.20
+    Cold_Start: 0.10
+
+# -----------------------------------------------------------------------------
+# 4. Diseño Experimental de Pronóstico (Marco PICO)
+# -----------------------------------------------------------------------------
+forecasting:
+  frequency: "W-MON"
+  horizons: [4, 8, 12]
+  primary_horizon: 12            # H = 12 semanas para evaluación principal
+  context_lengths: [12, 26, 52]
+  primary_context_length: 26     # L = 26 semanas (media temporada anual)
+  quantiles: [0.1, 0.5, 0.9]     # P10 (pesimista), P50 (mediana), P90 (stock seguridad)
+  seasonal_period: 52            # Periodicidad anual semanal
+  validation_weeks: 8            # Ventana de validación cronológica
+  test_weeks: 12                 # Ventana de prueba final sin fuga de datos (data leakage)
+
+  exogenous_covariates:
+    - "avg_price"
+    - "discount_depth"
+    - "sales_channel_id"
+    - "month_sin"
+    - "month_cos"
+    - "is_black_friday"
+    - "is_christmas"
+    - "is_mothers_day_co"
+    - "is_amor_y_amistad_co"
+
+# -----------------------------------------------------------------------------
+# 5. Clasificación de Regímenes de Demanda (Matriz Syntetos-Boylan, 2005)
+# -----------------------------------------------------------------------------
+regime_thresholds:
+  adi_cutoff: 1.32               # Umbral de intervalo promedio entre demandas positivas
+  cv2_cutoff: 0.49               # Umbral de coeficiente de variación al cuadrado
+  cold_start_max_weeks: 6        # Referencias con < 6 semanas activas en entrenamiento
+
+# -----------------------------------------------------------------------------
+# 6. Modelos Evaluados (Líneas Base vs. Modelos Fundacionales + LoRA)
+# -----------------------------------------------------------------------------
+models:
+  baselines:
+    statistical_models:
+      - "CrostonClassic"
+      - "CrostonSBA"
+      - "TSB"
+      - "AutoETS"
+      - "SeasonalNaive"
+    lightgbm:
+      n_estimators: 250
+      learning_rate: 0.05
+      num_leaves: 31
+      min_child_samples: 20
+      lags: [1, 2, 4, 8, 12]
+      rolling_windows: [4, 8, 12]
+
+  tsfm:
+    chronos_bolt:
+      repo_id: "amazon/chronos-bolt-small"
+      fallback_repo_id: "amazon/chronos-bolt-tiny"
+      enabled: true
+    chronos_2:
+      repo_id: "amazon/chronos-2"
+      fallback_repo_id: "amazon/chronos-t5-small"
+      enabled: true
+    timesfm:
+      repo_id: "google/timesfm-1.0-200m-pytorch"
+      enabled: true
+    moirai:
+      repo_id: "Salesforce/moirai-1.1-R-small"
+      enabled: true
+    covariate_adapter_ridge_alpha: 1.0
+
+  lora_finetuning:
+    base_model_id: "amazon/chronos-t5-small"
+    r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    target_modules: ["q", "v"]
+    learning_rate: 0.0005
+    batch_size: 32
+    epochs: 3
+    max_train_series: 1000
+
+# -----------------------------------------------------------------------------
+# 7. Escalamiento Big Data y Costo Computacional en Apache Spark
+# -----------------------------------------------------------------------------
+scaling_benchmark:
+  sample_sizes: [100, 1000, 10000, 100000]
+  default_spark_partitions: 16
+  batch_size_cpu: 32
+  batch_size_gpu: 128
+  # Costo referencial por hora de cómputo en la nube (USD/hora) para estimar
+  # el costo económico por cada 1.000 series pronosticadas
+  estimated_cluster_cost_usd_per_hour:
+    cpu_serverless: 0.45
+    gpu_single_t4_or_a10g: 1.60
+
+# -----------------------------------------------------------------------------
+# 8. Simulación Operativa de Inventario (Decision-Aware Evaluation)
+# -----------------------------------------------------------------------------
+inventory_simulation:
+  lead_time_weeks: 2             # Tiempo de reposición del proveedor (Lt = 2 semanas)
+  review_period_weeks: 1         # Revisión periódica semanal (R = 1 semana)
+  target_service_levels: [0.80, 0.90, 0.95]
+  primary_service_level: 0.90    # Meta de Fill Rate del 90% (cuantil P90)
+  holding_cost_per_unit_week: 0.50  # Costo semanal de almacenamiento/inmovilización (USD)
+  stockout_penalty_per_unit: 5.00   # Costo de oportunidad por unidad en quiebre (USD)
+  initial_stock_weeks_cover: 2.0    # Cobertura inicial en semanas de demanda media
+
+# -----------------------------------------------------------------------------
+# 9. Gobernanza de Datos y Cumplimiento Legal (Colombia)
+# -----------------------------------------------------------------------------
+governance:
+  compliance_frameworks:
+    - "Ley Estatutaria 1581 de 2012 (Protección de Datos Personales - Colombia)"
+    - "CONPES 3920 (Política Nacional de Explotación de Datos - Big Data)"
+    - "CONPES 4144 de 2025 (Política Nacional de Inteligencia Artificial)"
+  hash_salt_env_var: "FASHION_HASH_SALT"
+  default_salt: "upb_gidatic_ley1581_2026_salt"
+  anonymize_customer_id: true
+  anonymize_store_id: false
+  m5_pretraining_contamination_warning: true
+

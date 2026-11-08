@@ -1,0 +1,38 @@
+# =============================================================================
+# databricks.yml - Declarative Automation Bundle (DABs)
+# Proyecto de Grado Maestría en Ciencia de Datos (UPB - Grupo GIDATIC)
+# Autor: Diego Alexander Sánchez Henao | Director: Ferney Orlando Amaya Fernández
+# =============================================================================
+
+bundle:
+  name: tesis-tsfm-retail-moda-databricks
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: "Catálogo de Unity Catalog donde residen las capas Bronze, Silver y Gold"
+    default: "workspace"
+  schema:
+    description: "Esquema del proyecto en Unity Catalog"
+    default: "fashion_forecasting"
+  use_smoke_test:
+    description: "Bandera de ejecución ('true' para Smoke Test sintético, 'false' para datos completos H&M)"
+    default: "true"
+
+targets:
+  dev:
+    default: true
+    mode: development
+    variables:
+      catalog: "workspace"
+      schema: "fashion_forecasting"
+      use_smoke_test: "true"
+
+  prod:
+    mode: production
+    variables:
+      catalog: "workspace"
+      schema: "fashion_forecasting"
+      use_smoke_test: "false"
