@@ -46,6 +46,7 @@ unity_catalog:
 
     # Capa Gold (Pronósticos, simulación de inventario, escalabilidad y matriz final)
     gold_forecasts_baselines: "gold_forecasts_baselines"
+    gold_arima_vs_sarima_diagnostics: "gold_arima_vs_sarima_diagnostics"
     gold_forecasts_tsfm: "gold_forecasts_tsfm"
     gold_scaling_benchmarks: "gold_scaling_benchmarks"
     gold_inventory_simulation: "gold_inventory_simulation"
@@ -126,6 +127,8 @@ regime_thresholds:
 models:
   baselines:
     statistical_models:
+      - "ARIMA"
+      - "SARIMA"
       - "CrostonClassic"
       - "CrostonSBA"
       - "TSB"

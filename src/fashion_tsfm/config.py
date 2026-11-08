@@ -52,6 +52,7 @@ def _default_config_dict() -> Dict[str, Any]:
                 "silver_weekly_panel": "silver_fashion_weekly_panel",
                 "silver_regime_catalog": "silver_regime_catalog",
                 "gold_forecasts_baselines": "gold_forecasts_baselines",
+                "gold_arima_vs_sarima_diagnostics": "gold_arima_vs_sarima_diagnostics",
                 "gold_forecasts_tsfm": "gold_forecasts_tsfm",
                 "gold_scaling_benchmarks": "gold_scaling_benchmarks",
                 "gold_inventory_simulation": "gold_inventory_simulation",
@@ -113,7 +114,7 @@ def _default_config_dict() -> Dict[str, Any]:
         },
         "models": {
             "baselines": {
-                "statistical_models": ["CrostonClassic", "CrostonSBA", "TSB", "AutoETS", "SeasonalNaive"],
+                "statistical_models": ["ARIMA", "SARIMA", "CrostonClassic", "CrostonSBA", "TSB", "AutoETS", "SeasonalNaive"],
                 "lightgbm": {"n_estimators": 250, "learning_rate": 0.05, "num_leaves": 31},
             },
             "tsfm": {

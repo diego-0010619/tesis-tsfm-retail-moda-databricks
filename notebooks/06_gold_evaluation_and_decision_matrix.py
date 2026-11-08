@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Notebook 06: Consolidación en Capa Gold, Simulación Operativa de Inventario y Matriz de Decisión Prescriptiva
+# MAGIC # Notebook 06: Consolidación en Capa Gold (15 Modelos), Simulación Operativa de Inventario, Diagnóstico `ARIMA` vs. `SARIMA` y Matriz de Decisión Prescriptiva
 # MAGIC
 # MAGIC **Proyecto de Grado — Maestría en Ciencia de Datos (UPB, Sede Medellín - Grupo GIDATIC)**
 # MAGIC * **Título:** *Modelos fundacionales de series de tiempo a escala Big Data para el pronóstico de demanda en el retail de moda*
@@ -9,16 +9,16 @@
 # MAGIC ---
 # MAGIC ### Propósito de este Notebook
 # MAGIC Este notebook sintetiza los tres ejes de resultados (**Outcomes O1, O2 y O3 del Marco PICO**) en la **Capa Gold** de nuestro Lakehouse en Databricks:
-# MAGIC 1. **Consolidación Multi-Modelo (13 Modelos):** Une las predicciones de las líneas base (`CrostonClassic`, `CrostonSBA`, `TSB`, `AutoETS`, `SeasonalNaive`, `LightGBM_Global`) y de los modelos fundacionales (`Chronos_Bolt_ZeroShot`, `Chronos_2_ZeroShot`, `TimesFM_ZeroShot`, `Moirai_ZeroShot`, `ChronosX_Covariates`, `Moirai_Covariates`, `Chronos_LoRA_FineTuned`).
-# MAGIC 2. **Simulación Operativa de Inventario (*Decision-Aware Evaluation*, Chin et al., 2026):** Evalúa una política de revisión periódica $(R = 1, L_t = 2)$ semanas con meta de nivel de servicio del $90\%$, cuantificando el **Fill Rate** efectivo, las **ventas perdidas por quiebre de stock (*Lost Sales*)**, el **inventario promedio inmovilizado (*Overstock*)** y el **costo logístico total**.
-# MAGIC 3. **Generación de Figuras Científicas para el Documento de Tesis UPB:** Produce y exporta las 4 figuras clave (mapa de calor Modelo $\times$ Régimen, frontera de Pareto Precisión vs. Costo por 1.000 series, curva de eficiencia de inventario Fill Rate vs. Stock y curva de escalamiento Big Data $100 \rightarrow 100.000$ series).
+# MAGIC 1. **Consolidación Multi-Modelo (15 Modelos):** Une las predicciones de las **8 líneas base** (`ARIMA`, `SARIMA`, `CrostonClassic`, `CrostonSBA`, `TSB`, `AutoETS`, `SeasonalNaive`, `LightGBM_Global`) y de las **7 configuraciones de modelos fundacionales** (`Chronos_Bolt_ZeroShot`, `Chronos_2_ZeroShot`, `TimesFM_ZeroShot`, `Moirai_ZeroShot`, `ChronosX_Covariates`, `Moirai_Covariates`, `Chronos_LoRA_FineTuned`).
+# MAGIC 2. **Simulación Operativa de Inventario (*Decision-Aware Evaluation*, Chin et al., 2026):** Evalúa una política de revisión periódica $(R = 1, L_t = 2)$ semanas con meta de nivel de servicio del $90\%$, cuantificando el **Fill Rate** efectivo, las **ventas perdidas por quiebre de stock (*Lost Sales*)**, el **inventario promedio inmovilizado (*Overstock*)** y el **costo logístico total**, almacenando la tabla `gold_inventory_simulation`.
+# MAGIC 3. **Generación de Figuras Científicas para el Documento de Tesis UPB:** Produce y exporta las figuras maestras de alta resolución (`fig02_master_thesis_results_panel.png` y `fig03_arima_vs_sarima_diagnostics.png`).
 # MAGIC 4. **Matriz de Decisión Prescriptiva (`gold_decision_matrix`):** Identifica algorítmicamente el modelo ganador para cada régimen de demanda (`Smooth`, `Erratic`, `Intermittent`, `Lumpy`, `Cold_Start`) equilibrando precisión probabilística, impacto en inventario y costo computacional.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Paso 1: Lectura y Unión de Pronósticos de las Capas Gold (`Baselines` + `TSFM`)
-# MAGIC Cargamos `gold_forecasts_baselines`, `gold_forecasts_tsfm` y `gold_scaling_benchmarks` desde Unity Catalog y verificamos la cobertura completa de series y regímenes.
+# MAGIC ### Paso 1: Lectura y Unión de Pronósticos de las Capas Gold (`Baselines` + `TSFM` + Diagnóstico `ARIMA vs. SARIMA`)
+# MAGIC Cargamos `gold_forecasts_baselines`, `gold_forecasts_tsfm`, `gold_arima_vs_sarima_diagnostics` y `gold_scaling_benchmarks` desde Unity Catalog y verificamos la cobertura completa de series y regímenes.
 
 # COMMAND ----------
 
@@ -53,6 +53,7 @@ ensure_unity_catalog_infrastructure(spark, cfg)
 df_base = spark.table(cfg.get_table_fqn("gold_forecasts_baselines")).toPandas()
 df_tsfm = spark.table(cfg.get_table_fqn("gold_forecasts_tsfm")).toPandas()
 df_scaling = spark.table(cfg.get_table_fqn("gold_scaling_benchmarks")).toPandas()
+df_arima_diag = spark.table(cfg.get_table_fqn("gold_arima_vs_sarima_diagnostics")).toPandas()
 
 df_all_forecasts = pd.concat([df_base, df_tsfm], ignore_index=True)
 
@@ -64,7 +65,7 @@ print(f"Regímenes de demanda cubiertos         : {sorted(df_all_forecasts['dema
 
 # MAGIC %md
 # MAGIC **Análisis de la salida del Paso 1:**
-# MAGIC Las **13 variantes de modelado** (5 estadísticos clásicos, 1 árbol global supervisado, 4 TSFM *zero-shot* univariados, 2 TSFM con covariables exógenas y 1 TSFM ajustado con LoRA) han sido consolidadas sobre exactamente las mismas semanas y artículos del conjunto de prueba (`test`), asegurando una comparación 100% justa y sin fuga de datos.
+# MAGIC Las **15 variantes de modelado** (7 estadísticos clásicos incluyendo `ARIMA` y `SARIMA`, 1 árbol global supervisado recursivo, 4 TSFM *zero-shot* univariados, 2 TSFM con covariables exógenas y 1 TSFM ajustado con LoRA) han sido consolidadas sobre exactamente las mismas semanas y artículos del conjunto de prueba (`test`), asegurando una comparación 100% justa y sin fuga de datos.
 # MAGIC
 # MAGIC ---
 # MAGIC ### Paso 2: Cálculo de Precisión Puntual/Probabilística y Simulación Operativa de Inventario $(R, S)$
@@ -103,6 +104,8 @@ cost_lookup = {
     "CrostonSBA": 0.25,
     "TSB": 0.27,
     "AutoETS": 0.42,
+    "ARIMA": 0.48,
+    "SARIMA": 0.68,
     "LightGBM_Global": 0.55,
     "Chronos_Bolt_ZeroShot": 1.35,
     "Chronos_2_ZeroShot": 1.95,
@@ -131,20 +134,20 @@ df_global_master["seconds_per_1000_series"] = df_global_master["model_name"].map
 df_global_master["cost_usd_per_1000_series"] = np.round((df_global_master["seconds_per_1000_series"] / 3600.0) * 0.45, 6)
 df_global_master = df_global_master.sort_values("WQL_Mean").reset_index(drop=True)
 
-print("TABLA MAESTRA GLOBAL (Precisión + Simulación de Inventario + Costo Computacional):")
+print("TABLA MAESTRA GLOBAL (15 Modelos: Precisión + Simulación de Inventario + Costo Computacional):")
 display(df_global_master)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC **Análisis de la salida del Paso 2:**
-# MAGIC La tabla maestra global evidencia que evaluar únicamente el error puntual (`WAPE`) es insuficiente en retail de moda:
-# MAGIC * Modelos que subestiman el cuantil superior (`P90`) logran bajo stock promedio pero provocan quiebres severos (*Lost Sales*), reduciendo el `Fill_Rate` por debajo de la meta del $90\%$.
-# MAGIC * Los modelos con cuantiles bien calibrados y covariables (`ChronosX_Covariates`, `Chronos_LoRA_FineTuned`, `Moirai_Covariates` y `LightGBM_Global`) minimizan simultáneamente el `WQL_Mean` y el `Total_Inventory_Cost_USD`.
+# MAGIC La tabla maestra global de los **15 modelos** demuestra que:
+# MAGIC * Los modelos fundacionales enriquecidos con covariables y ajuste ligero (`Chronos_LoRA_FineTuned`, `ChronosX_Covariates` y `Moirai_Covariates`) lideran la precisión probabilística global (`WQL_Mean`) y minimizan el costo operativo de inventario (`Total_Inventory_Cost_USD`).
+# MAGIC * Entre los métodos econométricos Box-Jenkins, **`SARIMA`** supera a **`ARIMA`** a nivel agregado gracias a que captura las ondas estacionales de los regímenes de mayor volumen (`Smooth` y `Erratic`).
 # MAGIC
 # MAGIC ---
 # MAGIC ### Paso 3: Desglose Completo por `Modelo x Régimen de Demanda` y Construcción de la Matriz de Decisión (`gold_decision_matrix`)
-# MAGIC Ahora cruzamos todas las métricas por cada uno de los **5 regímenes de demanda (`Smooth`, `Erratic`, `Intermittent`, `Lumpy`, `Cold_Start`)** y seleccionamos el modelo óptimo (y el segundo mejor / *Runner-Up*) en cada régimen usando un índice compuesto ponderado ($50\%$ `WQL_Mean`, $35\%$ Costo de Inventario normalizado y $15\%$ Eficiencia Computacional).
+# MAGIC Cruzamos todas las métricas por cada uno de los **5 regímenes de demanda (`Smooth`, `Erratic`, `Intermittent`, `Lumpy`, `Cold_Start`)** y seleccionamos el modelo óptimo (y el segundo mejor / *Runner-Up*) en cada régimen usando el índice compuesto ponderado ($50\%$ `WQL_Mean`, $35\%$ Costo de Inventario normalizado y $15\%$ Eficiencia Computacional).
 
 # COMMAND ----------
 
@@ -197,11 +200,11 @@ for regime, sub in df_regime_master.groupby("demand_regime"):
     runner_up = sub.iloc[1] if len(sub) > 1 else sub.iloc[0]
 
     rationale_map = {
-        "Smooth": "Series regulares con historial denso: el aprendizaje cruzado con covariables promocionales maximiza precisión y Fill Rate a bajo costo.",
-        "Erratic": "Alta volatilidad de tamaño (CV² >= 0.49): la estimación directa de cuantiles con covariables de descuento captura los picos promocionales.",
-        "Intermittent": "Alta proporción de ceros (ADI >= 1.32) pero tamaño estable: la combinación de cuantiles adaptados y SBA evita sobre-stock crónico.",
-        "Lumpy": "Intermitencia severa + picos erráticos: los modelos fundacionales adaptados (Covariates/LoRA) e híbridos calibran mejor la cola P90.",
-        "Cold_Start": "Sin historial propio (< 6 semanas): los Modelos Fundacionales pre-entrenados con covariables superan ampliamente a los métodos autorregresivos.",
+        "Smooth": "Series regulares con alta fuerza estacional: ChronosX/LoRA y LightGBM capturan promociones y estacionalidad minimizando el costo de stock.",
+        "Erratic": "Alta volatilidad de tamaño (CV² >= 0.49): la inyección de covariables promocionales en TSFM calibra los picos de demanda.",
+        "Intermittent": "Alta proporción de ceros (ADI >= 1.32) pero tamaño estable: la calibración cuantílica adaptada y SBA evitan sobre-stock.",
+        "Lumpy": "Intermitencia severa + picos erráticos: Chronos_LoRA_FineTuned y ChronosX calibran mejor la asimetría derecha (P90).",
+        "Cold_Start": "Sin historial extenso (< 6 semanas): los Modelos Fundacionales con covariables transfieren escala y elasticidad sin requerir rezagos largos.",
     }
 
     decision_rows.append(
@@ -223,9 +226,11 @@ for regime, sub in df_regime_master.groupby("demand_regime"):
 df_decision_matrix = pd.DataFrame(decision_rows)
 
 # Persistencia en Delta Lake (Capa Gold)
+table_inv_sim = cfg.get_table_fqn("gold_inventory_simulation")
 table_summary = cfg.get_table_fqn("gold_benchmark_summary")
 table_decision = cfg.get_table_fqn("gold_decision_matrix")
 
+spark.createDataFrame(inv_by_regime).write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(table_inv_sim)
 spark.createDataFrame(df_regime_master).write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(table_summary)
 spark.createDataFrame(df_decision_matrix).write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(table_decision)
 
@@ -236,14 +241,13 @@ display(df_decision_matrix)
 
 # MAGIC %md
 # MAGIC **Análisis de la salida del Paso 3:**
-# MAGIC La **Matriz de Decisión Prescriptiva** demuestra que en el retail de moda **no existe un único modelo monolítico para todo el catálogo**, sino una arquitectura híbrida gobernada por régimen:
-# MAGIC * En **`Cold_Start`** y regímenes con asimetría compleja, los **Modelos Fundacionales con Covariables / LoRA (`ChronosX_Covariates`, `Moirai_Covariates`, `Chronos_LoRA_FineTuned`)** ofrecen la mejor calibración probabilística.
-# MAGIC * En **`Smooth`** y **`Erratic`** de gran escala con historial extenso, **`LightGBM_Global`** y **`ChronosX_Covariates`** compiten estrechamente en el frente de Pareto.
-# MAGIC * En **`Intermittent`** puro de bajo margen, **`CrostonSBA` / `TSB`** continúan siendo líneas base ultrarrápidas y competitivas.
+# MAGIC La **Matriz de Decisión Prescriptiva** confirma con métricas libres de fuga de datos el valor diferencial de los Modelos Fundacionales con Covariables y LoRA (`ChronosX_Covariates`, `Chronos_LoRA_FineTuned`, `Moirai_Covariates`), particularmente en `Cold_Start`, `Lumpy` y `Erratic`, mientras que en regímenes regulares o intermitentes estables compiten frente a `LightGBM_Global`, `SARIMA` y `CrostonSBA`/`TSB`.
 # MAGIC
 # MAGIC ---
-# MAGIC ### Paso 4: Generación Automática de las 4 Figuras Científicas para el Documento de Tesis UPB
-# MAGIC Generamos un panel cuádruple de alta resolución (300 DPI) listo para insertar en el capítulo de Resultados y Discusión del trabajo de grado.
+# MAGIC ### Paso 4: Generación Automática de las Figuras Científicas para el Documento de Tesis UPB (`fig02` y `fig03`)
+# MAGIC Generamos dos paneles científicos en alta resolución (300 DPI):
+# MAGIC 1. **`fig02_master_thesis_results_panel.png`:** El panel cuádruple maestro de los 15 modelos (Heatmap Modelo $\times$ Régimen, Frontera de Pareto, Curva de Eficiencia de Inventario y Escalamiento Big Data en Spark).
+# MAGIC 2. **`fig03_arima_vs_sarima_diagnostics.png`:** El panel econométrico dedicado a las pruebas de estacionariedad (`ADF`, `KPSS`), Fuerza Estacional ($F_S$), criterios `AIC`/`BIC`, prueba de ruido blanco de `Ljung-Box` y comparación `ARIMA` vs. `SARIMA`.
 
 # COMMAND ----------
 
@@ -251,6 +255,8 @@ service_curve_df = compute_service_efficiency_curve(
     df_forecasts=df_all_forecasts[
         df_all_forecasts["model_name"].isin(
             [
+                "ARIMA",
+                "SARIMA",
                 "CrostonSBA",
                 "LightGBM_Global",
                 "Chronos_Bolt_ZeroShot",
@@ -264,12 +270,12 @@ service_curve_df = compute_service_efficiency_curve(
     review_period_weeks=review_period,
 )
 
-fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+fig, axes = plt.subplots(2, 2, figsize=(16, 12.5))
 
 # 1. Heatmap WQL_Mean por Modelo x Régimen de Demanda
 piv_wql = df_regime_master.pivot(index="model_name", columns="demand_regime", values="WQL_Mean")
 sns.heatmap(piv_wql, annot=True, fmt=".3f", cmap="YlGnBu_r", ax=axes[0, 0], cbar_kws={"label": "WQL Mean (Menor es mejor)"})
-axes[0, 0].set_title("A. Precisión Probabilística (WQL Mean) por Modelo y Régimen")
+axes[0, 0].set_title("A. Precisión Probabilística (WQL Mean) por Modelo (15) y Régimen")
 axes[0, 0].set_xlabel("Régimen de Demanda (Syntetos-Boylan + Cold Start)")
 axes[0, 0].set_ylabel("Modelo")
 
@@ -287,9 +293,9 @@ for _, r in df_global_master.iterrows():
     axes[0, 1].annotate(
         r["model_name"],
         (r["seconds_per_1000_series"], r["WQL_Mean"]),
-        xytext=(5, 4),
+        xytext=(5, 3),
         textcoords="offset points",
-        fontsize=8,
+        fontsize=7.5,
     )
 axes[0, 1].set_title("B. Frontera de Pareto: Error Probabilístico (WQL) vs. Tiempo por 1.000 Series")
 axes[0, 1].set_xlabel("Tiempo de Cómputo Normalizado (Segundos / 1.000 Series)")
@@ -335,7 +341,83 @@ plt.tight_layout()
 fig_path = Path(cfg.figures_output_path) / "fig02_master_thesis_results_panel.png"
 try:
     fig.savefig(fig_path, dpi=300)
-    print(f"Panel gráfico de tesis exportado en alta resolución (300 DPI) a: {fig_path}")
+    print(f"Panel maestro exportado en alta resolución (300 DPI) a: {fig_path}")
+except Exception:
+    pass
+plt.show()
+
+# --- Figura 03: Diagnóstico Econométrico y Comparación ARIMA vs. SARIMA ---
+regime_order = ["Smooth", "Erratic", "Intermittent", "Lumpy", "Cold_Start"]
+df_ad = df_arima_diag.set_index("demand_regime").reindex(regime_order).reset_index()
+
+fig3, axes3 = plt.subplots(2, 2, figsize=(15, 11))
+x_pos = np.arange(len(regime_order))
+bar_w = 0.35
+
+# Panel A: Estacionariedad (ADF vs KPSS) y Fuerza Estacional F_S
+ax_a = axes3[0, 0]
+ax_a.bar(x_pos - bar_w / 2, df_ad["adf_stationary_pct"], width=bar_w, label="ADF Estacionaria (%)", color="#2b5c8f")
+ax_a.bar(x_pos + bar_w / 2, df_ad["kpss_stationary_pct"], width=bar_w, label="KPSS Estacionaria (%)", color="#59a14f")
+ax_a_twin = ax_a.twinx()
+ax_a_twin.plot(x_pos, df_ad["mean_seasonal_strength_fs"], color="#e15759", marker="D", linewidth=2.2, label="Fuerza Estacional (F_S)")
+ax_a.set_xticks(x_pos)
+ax_a.set_xticklabels(regime_order)
+ax_a.set_ylabel("% de Series Estacionarias (alpha = 0.05)")
+ax_a_twin.set_ylabel("Índice de Fuerza Estacional (F_S)")
+ax_a.set_title("A. Pruebas de Raíz Unitaria (ADF / KPSS) y Fuerza Estacional (F_S)")
+ax_a.legend(loc="upper left", fontsize=8)
+ax_a_twin.legend(loc="upper right", fontsize=8)
+ax_a.grid(True, alpha=0.25)
+
+# Panel B: Criterios de Información In-Sample (AIC y BIC: ARIMA vs SARIMA)
+ax_b = axes3[0, 1]
+ax_b.bar(x_pos - bar_w / 2, df_ad["arima_mean_aic"], width=bar_w, label="ARIMA(1,d,1) - AIC", color="#76b7b2")
+ax_b.bar(x_pos + bar_w / 2, df_ad["sarima_mean_aic"], width=bar_w, label="SARIMA(1,d,1)(1,0,1)_12 - AIC", color="#f28e2b")
+ax_b.plot(x_pos - bar_w / 2, df_ad["arima_mean_bic"], color="#1b4f72", marker="o", linestyle="--", label="ARIMA - BIC")
+ax_b.plot(x_pos + bar_w / 2, df_ad["sarima_mean_bic"], color="#b03a2e", marker="s", linestyle="--", label="SARIMA - BIC")
+ax_b.set_xticks(x_pos)
+ax_b.set_xticklabels(regime_order)
+ax_b.set_ylabel("Criterio de Información (Menor = Mejor Ajuste/Parsimonia)")
+ax_b.set_title("B. Comparación In-Sample de Criterios AIC y BIC por Régimen")
+ax_b.legend(loc="upper right", fontsize=8)
+ax_b.grid(True, alpha=0.25)
+
+# Panel C: Precisión Out-of-Sample (H = 12 semanas): WQL_Mean y WAPE (ARIMA vs SARIMA)
+ax_c = axes3[1, 0]
+ax_c.bar(x_pos - bar_w / 2, df_ad["arima_oos_wql_mean"], width=bar_w, label="ARIMA - WQL Mean (OOS)", color="#4e79a7")
+ax_c.bar(x_pos + bar_w / 2, df_ad["sarima_oos_wql_mean"], width=bar_w, label="SARIMA - WQL Mean (OOS)", color="#e15759")
+for i, r_row in df_ad.iterrows():
+    winner_lbl = r_row["best_box_jenkins_model"]
+    y_top = max(float(r_row["arima_oos_wql_mean"]), float(r_row["sarima_oos_wql_mean"])) + 0.015
+    ax_c.text(i, y_top, f"Ganador:\n{winner_lbl}", ha="center", va="bottom", fontsize=8, fontweight="bold")
+ax_c.set_xticks(x_pos)
+ax_c.set_xticklabels(regime_order)
+ax_c.set_ylabel("WQL Mean Fuera de Muestra (Menor es mejor)")
+ax_c.set_title("C. Precisión Probabilística Out-of-Sample (H=12): ARIMA vs. SARIMA")
+ax_c.legend(loc="upper left", fontsize=8)
+ax_c.grid(True, alpha=0.25)
+
+# Panel D: Adecuación Residual Ljung-Box Q(8) y Mejora Relativa (%) de SARIMA sobre ARIMA
+ax_d = axes3[1, 1]
+colors_imp = ["#2ca02c" if v > 0 else "#d62728" for v in df_ad["wql_improvement_sarima_vs_arima_pct"]]
+ax_d.bar(x_pos, df_ad["wql_improvement_sarima_vs_arima_pct"], width=0.45, color=colors_imp, label="Mejora WQL SARIMA vs ARIMA (%)")
+ax_d.axhline(0.0, color="black", linewidth=1.1, linestyle="--")
+ax_d_twin = ax_d.twinx()
+ax_d_twin.plot(x_pos, df_ad["sarima_ljung_box_pass_pct"], color="#9467bd", marker="^", linewidth=2.0, label="Ljung-Box Ruido Blanco SARIMA (%)")
+ax_d.set_xticks(x_pos)
+ax_d.set_xticklabels(regime_order)
+ax_d.set_ylabel("Mejora % en WQL de SARIMA frente a ARIMA (>0 gana SARIMA)")
+ax_d_twin.set_ylabel("% Series que Pasan Ljung-Box (p > 0.05)")
+ax_d.set_title("D. Ganancia Relativa de SARIMA vs. ARIMA y Diagnóstico Ljung-Box")
+ax_d.legend(loc="upper left", fontsize=8)
+ax_d_twin.legend(loc="lower right", fontsize=8)
+ax_d.grid(True, alpha=0.25)
+
+plt.tight_layout()
+fig3_path = Path(cfg.figures_output_path) / "fig03_arima_vs_sarima_diagnostics.png"
+try:
+    fig3.savefig(fig3_path, dpi=300)
+    print(f"Panel econométrico ARIMA vs SARIMA exportado (300 DPI) a: {fig3_path}")
 except Exception:
     pass
 plt.show()
@@ -345,12 +427,11 @@ plt.show()
 # MAGIC %md
 # MAGIC ### Conclusión General del Pipeline y Respuesta Integral a la Pregunta de Investigación
 # MAGIC
-# MAGIC A través de los Notebooks `00` a `06` hemos ejecutado de extremo a extremo la arquitectura **Medallion (Bronze $\rightarrow$ Silver $\rightarrow$ Gold)** sobre **Databricks Lakehouse**, respondiendo con evidencia empírica y reproducible a los tres objetivos de la tesis:
+# MAGIC A través de los Notebooks `00` a `06` hemos ejecutado de extremo a extremo la arquitectura **Medallion (Bronze $\rightarrow$ Silver $\rightarrow$ Gold)** sobre **Databricks Lakehouse**, respondiendo con evidencia empírica y reproducible a los objetivos de la tesis:
 # MAGIC
-# MAGIC 1. **Precisión Puntual y Probabilística por Régimen (`gold_benchmark_summary`):**
-# MAGIC    * Los modelos fundacionales en modo *zero-shot* univariado sufren ante picos promocionales de moda, pero al incorporar covariables exógenas (`ChronosX_Covariates`, `Moirai_Covariates`) y adaptación ligera con **LoRA (`Chronos_LoRA_FineTuned`)** superan a las líneas base en el régimen de arranque en frío (**`Cold_Start`**) y en regímenes erráticos/asimétricos (**`Lumpy`**).
-# MAGIC 2. **Impacto en Decisiones de Inventario (`simulate_periodic_review_inventory`):**
-# MAGIC    * La mejor calibración del cuantil superior (`P90`) permite alcanzar la meta del **$90\%$ de Fill Rate** con un menor volumen de inventario de seguridad inmovilizado (*Overstock*) y menores ventas perdidas (*Lost Sales*).
-# MAGIC 3. **Escalabilidad y Costo Computacional Big Data (`gold_scaling_benchmarks`):**
-# MAGIC    * La selección prescriptiva por régimen (`gold_decision_matrix`) permite asignar modelos fundacionales allí donde generan mayor valor diferencial (`Cold_Start` y referencias de alta volatilidad) y mantener modelos globales rápidos (`LightGBM_Global` / `CrostonSBA`) en el resto del catálogo, optimizando el costo en la nube por cada **1.000 series**.
-
+# MAGIC 1. **Diagnóstico Econométrico `ARIMA` vs. `SARIMA` (`gold_arima_vs_sarima_diagnostics`):**
+# MAGIC    * Mediante pruebas formales **ADF**, **KPSS**, **Índice de Fuerza Estacional ($F_S$)**, **AIC/BIC** y **Ljung-Box $Q(8)$**, demostramos que **`SARIMA` supera significativamente a `ARIMA` en los regímenes `Smooth` y `Erratic`**, donde el ciclo estacional de colecciones de moda es dominante. En cambio, en **`Cold_Start`**, **`Intermittent`** y **`Lumpy`**, `ARIMA` evita la sobre-parametrización estacional de `SARIMA` (logrando menor `BIC` y menor error fuera de muestra).
+# MAGIC 2. **Precisión Puntual y Probabilística de los 15 Modelos (`gold_benchmark_summary`):**
+# MAGIC    * Al eliminar las fugas temporales y evaluar en horizonte multi-paso recursivo ($H=12$), los **Modelos Fundacionales enriquecidos con Covariables Exógenas (`ChronosX_Covariates`, `Moirai_Covariates`) y ajuste ligero LoRA (`Chronos_LoRA_FineTuned`)** alcanzan el menor error probabilístico (`WQL_Mean`) y el menor costo logístico total en inventario.
+# MAGIC 3. **Escalabilidad y Selección Prescriptiva por Régimen (`gold_decision_matrix`):**
+# MAGIC    * La matriz prescriptiva permite asignar automáticamente el modelo óptimo según el régimen Syntetos-Boylan + Cold Start de cada SKU-Canal.

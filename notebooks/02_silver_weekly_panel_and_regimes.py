@@ -153,13 +153,14 @@ distinct_weeks = distinct_weeks.withColumn(
 
 df_panel_split = df_balanced.join(distinct_weeks, on="week_start", how="inner")
 
-# Precio de referencia calculado SOLO en Train para no filtrar información futura
+# Precio de referencia de lista calculado SOLO en Train usando el máximo (precio regular sin descuento)
+# para evitar fuga de datos por imputación (Imputation Target Leakage) en semanas con demanda 0.
 train_price_ref = (
     df_panel_split.filter(F.col("split") == "train")
     .groupBy("article_id", "sales_channel_id")
     .agg(
-        F.avg("obs_avg_price").alias("train_ref_price"),
-        F.avg("obs_base_price").alias("train_ref_base_price"),
+        F.max("obs_base_price").alias("train_ref_base_price"),
+        F.max("obs_avg_price").alias("train_ref_regular_price"),
     )
 )
 
@@ -174,23 +175,7 @@ fallback_catalog_price = (
 )
 
 df_panel_cov = (
-    df_panel_cov.withColumn(
-        "base_price",
-        F.coalesce(F.col("obs_base_price"), F.col("train_ref_base_price"), fallback_catalog_price, F.lit(35.0)),
-    )
-    .withColumn(
-        "avg_price",
-        F.coalesce(F.col("obs_avg_price"), F.col("train_ref_price"), F.col("base_price"), F.lit(35.0)),
-    )
-    .withColumn(
-        "discount_depth",
-        F.coalesce(
-            F.col("obs_discount_depth"),
-            F.greatest(F.lit(0.0), (F.col("base_price") - F.col("avg_price")) / F.greatest(F.col("base_price"), F.lit(0.01))),
-            F.lit(0.0),
-        ),
-    )
-    .withColumn("month", F.month("week_start"))
+    df_panel_cov.withColumn("month", F.month("week_start"))
     .withColumn("week_of_year", F.weekofyear("week_start"))
     .withColumn("day_of_month", F.dayofmonth("week_start"))
     .withColumn("month_sin", F.round(F.sin(F.lit(2.0 * math.pi) * F.col("month") / F.lit(12.0)), 4))
@@ -211,6 +196,39 @@ df_panel_cov = (
         "is_christmas",
         F.when((F.col("month") == 12) & (F.col("day_of_month").between(10, 26)), F.lit(1)).otherwise(F.lit(0)),
     )
+    .withColumn(
+        "base_price",
+        F.coalesce(F.col("obs_base_price"), F.col("train_ref_base_price"), fallback_catalog_price, F.lit(35.0)),
+    )
+    .withColumn(
+        "scheduled_promo_discount",
+        F.when(
+            (F.col("is_black_friday") == 1)
+            | (F.col("is_christmas") == 1)
+            | (F.col("is_mothers_day_co") == 1)
+            | (F.col("is_amor_y_amistad_co") == 1),
+            F.lit(0.30),
+        )
+        .when(F.col("week_of_year").isin(4, 28, 40), F.lit(0.20))
+        .otherwise(F.lit(0.0)),
+    )
+    .withColumn(
+        "discount_depth",
+        F.coalesce(F.col("obs_discount_depth"), F.col("scheduled_promo_discount"), F.lit(0.0)),
+    )
+    .withColumn(
+        "avg_price",
+        F.round(
+            F.coalesce(
+                F.col("obs_avg_price"),
+                F.col("base_price") * (F.lit(1.0) - F.col("discount_depth")),
+                F.col("train_ref_regular_price"),
+                F.lit(35.0),
+            ),
+            2,
+        ),
+    )
+    .drop("scheduled_promo_discount")
 )
 
 display(

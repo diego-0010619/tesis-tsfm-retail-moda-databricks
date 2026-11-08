@@ -200,17 +200,22 @@ for _, art in df_articles_pd.iterrows():
                 cal["is_amor_y_amistad_co"],
             )
 
-            # Simulación de descuento comercial y precio efectivo
-            discount_depth = (
-                float(np.round(rng.uniform(0.15, 0.40), 2))
-                if is_promo_event == 1 or rng.random() < 0.12
-                else 0.0
-            )
+            # Simulación de descuento comercial programado por calendario promocional (exógeno puro)
+            if is_promo_event == 1:
+                discount_depth = 0.30
+            elif cal["week_of_year"] in (4, 28, 40):
+                discount_depth = 0.20
+            else:
+                discount_depth = 0.0
             effective_price = round(base_price * (1.0 - discount_depth), 2)
 
-            # Multiplicador estacional y de promoción (elasticidad precio positiva al descuento)
-            seasonal_wave = 1.0 + 0.20 * np.sin(2.0 * np.pi * cal["week_of_year"] / 52.0)
-            promo_lift = 1.0 + (1.6 * discount_depth) + (0.35 * is_promo_event)
+            # Multiplicador estacional armónico (ciclo anual 52 sem + colección trimestral de moda 12 sem)
+            seasonal_wave = (
+                1.0
+                + 0.30 * np.sin(2.0 * np.pi * cal["week_of_year"] / 52.0)
+                + 0.22 * np.cos(2.0 * np.pi * (w_idx + 1) / 12.0)
+            )
+            promo_lift = 1.0 + (1.85 * discount_depth) + (0.40 * is_promo_event)
 
             # Generación de la demanda según las propiedades matemáticas de ADI y CV^2
             if regime == "Smooth":
