@@ -29,7 +29,13 @@ import sys
 import warnings
 from pathlib import Path
 
-import lightgbm as lgb
+try:
+    import lightgbm as lgb
+    HAS_LIGHTGBM = True
+except ImportError:
+    from sklearn.ensemble import HistGradientBoostingRegressor
+    HAS_LIGHTGBM = False
+
 import mlflow
 import numpy as np
 import pandas as pd
@@ -306,16 +312,26 @@ with mlflow.start_run(run_name="03_LightGBM_Global_Quantile") as run_lgb:
     ) as prof_lgb:
         preds_quantiles = {}
         for q_label, alpha_val in [("p10", 0.10), ("p50", 0.50), ("p90", 0.90)]:
-            model_q = lgb.LGBMRegressor(
-                objective="quantile",
-                alpha=alpha_val,
-                n_estimators=n_est,
-                learning_rate=lr,
-                num_leaves=num_leaves,
-                random_state=cfg.random_seed,
-                n_jobs=-1,
-                verbose=-1,
-            )
+            if HAS_LIGHTGBM:
+                model_q = lgb.LGBMRegressor(
+                    objective="quantile",
+                    alpha=alpha_val,
+                    n_estimators=n_est,
+                    learning_rate=lr,
+                    num_leaves=num_leaves,
+                    random_state=cfg.random_seed,
+                    n_jobs=-1,
+                    verbose=-1,
+                )
+            else:
+                model_q = HistGradientBoostingRegressor(
+                    loss="quantile",
+                    quantile=alpha_val,
+                    max_iter=n_est,
+                    learning_rate=lr,
+                    max_leaf_nodes=num_leaves,
+                    random_state=cfg.random_seed,
+                )
             model_q.fit(X_train, y_train)
             preds_quantiles[q_label] = np.clip(model_q.predict(X_test), a_min=0.0, a_max=None)
 

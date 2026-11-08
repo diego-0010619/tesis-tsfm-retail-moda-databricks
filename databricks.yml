@@ -36,3 +36,4 @@ targets:
       catalog: "workspace"
       schema: "fashion_forecasting"
       use_smoke_test: "false"
+
