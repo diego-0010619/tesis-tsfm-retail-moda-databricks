@@ -70,6 +70,10 @@ flowchart LR
     Raw --> Bronze --> Silver --> Gold
 ```
 
+### Diagrama de Flujo de Componentes y Servicios Compartidos
+
+![Diagrama de arquitectura y flujo de componentes](./docs/diagrama_arquitectura_flujo.png)
+
 ---
 
 ## 3. Conjuntos de Datos y Gobernanza Legal
