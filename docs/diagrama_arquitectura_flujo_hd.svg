@@ -1,0 +1,206 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1560" width="100%" height="100%" font-family="'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#1e293b"/>
+    </marker>
+    <filter id="softShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+
+  <!-- Fondo lavanda original del diagrama -->
+  <rect width="1200" height="1560" fill="#efe4fb" rx="10"/>
+
+  <!-- ================= SUBGRAFOS (CONTENEDORES) ================= -->
+  <!-- 1. Ingesta y preparación -->
+  <rect x="330" y="185" width="460" height="275" fill="#f5f5f2" stroke="#d6d3cd" stroke-width="1.8" rx="6" filter="url(#softShadow)"/>
+  <text x="560" y="212" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">Ingesta y preparación</text>
+
+  <!-- 2. Pronóstico -->
+  <rect x="415" y="565" width="710" height="325" fill="#f5f5f2" stroke="#d6d3cd" stroke-width="1.8" rx="6" filter="url(#softShadow)"/>
+  <text x="770" y="592" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">Pronóstico</text>
+
+  <!-- 3. Evaluación y decisión -->
+  <rect x="485" y="995" width="250" height="255" fill="#f5f5f2" stroke="#d6d3cd" stroke-width="1.8" rx="6" filter="url(#softShadow)"/>
+  <text x="610" y="1022" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">Evaluación y decisión</text>
+
+  <!-- 4. Servicios compartidos -->
+  <rect x="30" y="1390" width="1040" height="125" fill="#f5f5f2" stroke="#d6d3cd" stroke-width="1.8" rx="6" filter="url(#softShadow)"/>
+  <text x="550" y="1416" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">Servicios compartidos</text>
+
+  <!-- ================= NODOS SUPERIORES ================= -->
+  <!-- Investigador (Círculo) -->
+  <circle cx="450" cy="65" r="54" fill="#dcd7fe" stroke="#4f46e5" stroke-width="2" filter="url(#softShadow)"/>
+  <text x="450" y="70" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1e1b4b">Investigador</text>
+
+  <!-- Datos H&M y VISUELLE (Cilindro) -->
+  <g transform="translate(575, 25)" filter="url(#softShadow)">
+    <path d="M 0,14 L 0,66 A 95,14 0 0,0 190,66 L 190,14 Z" fill="#fde68a" stroke="#d97706" stroke-width="2"/>
+    <ellipse cx="95" cy="14" rx="95" ry="14" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+    <text x="95" y="48" text-anchor="middle" font-size="15.5" font-weight="600" fill="#78350f">Datos H&amp;M y VISUELLE</text>
+  </g>
+
+  <!-- ================= NODOS: INGESTA Y PREPARACIÓN ================= -->
+  <!-- Entorno de prueba -->
+  <rect x="360" y="235" width="180" height="52" fill="#dbeafe" stroke="#2563eb" stroke-width="2" rx="4"/>
+  <text x="450" y="266" text-anchor="middle" font-size="15" font-weight="600" fill="#1e3a8a">Entorno de prueba</text>
+
+  <!-- Ingesta Bronze (Cilindro) -->
+  <g transform="translate(595, 232)">
+    <path d="M 0,12 L 0,58 A 75,12 0 0,0 150,58 L 150,12 Z" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <ellipse cx="75" cy="12" rx="75" ry="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="75" y="43" text-anchor="middle" font-size="15" font-weight="600" fill="#1e3a8a">Ingesta Bronze</text>
+  </g>
+
+  <!-- Panel y regímenes Silver (Cilindro) -->
+  <g transform="translate(570, 360)">
+    <path d="M 0,13 L 0,62 A 100,13 0 0,0 200,62 L 200,13 Z" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <ellipse cx="100" cy="13" rx="100" ry="13" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="100" y="46" text-anchor="middle" font-size="15" font-weight="600" fill="#1e3a8a">Panel y regímenes Silver</text>
+  </g>
+
+  <!-- ================= NODOS: PRONÓSTICO ================= -->
+  <!-- Baselines y LightGBM -->
+  <rect x="445" y="610" width="210" height="52" fill="#fef3c7" stroke="#d97706" stroke-width="2" rx="4"/>
+  <text x="550" y="641" text-anchor="middle" font-size="15" font-weight="600" fill="#78350f">Baselines y LightGBM</text>
+
+  <!-- TSFM zero-shot -->
+  <rect x="700" y="610" width="180" height="52" fill="#fef3c7" stroke="#d97706" stroke-width="2" rx="4"/>
+  <text x="790" y="641" text-anchor="middle" font-size="15" font-weight="600" fill="#78350f">TSFM zero-shot</text>
+
+  <!-- Adaptación LoRA -->
+  <rect x="920" y="610" width="180" height="52" fill="#fef3c7" stroke="#d97706" stroke-width="2" rx="4"/>
+  <text x="1010" y="641" text-anchor="middle" font-size="15" font-weight="600" fill="#78350f">Adaptación LoRA</text>
+
+  <!-- Pronósticos Gold (Cilindro) -->
+  <g transform="translate(565, 795)">
+    <path d="M 0,12 L 0,58 A 75,12 0 0,0 150,58 L 150,12 Z" fill="#fde68a" stroke="#d97706" stroke-width="2"/>
+    <ellipse cx="75" cy="12" rx="75" ry="12" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+    <text x="75" y="43" text-anchor="middle" font-size="15" font-weight="600" fill="#78350f">Pronósticos Gold</text>
+  </g>
+
+  <!-- ================= NODOS: EVALUACIÓN Y DECISIÓN ================= -->
+  <!-- Evaluación y matriz -->
+  <rect x="515" y="1040" width="195" height="52" fill="#dcfce7" stroke="#16a34a" stroke-width="2" rx="4"/>
+  <text x="612.5" y="1071" text-anchor="middle" font-size="15" font-weight="600" fill="#14532d">Evaluación y matriz</text>
+
+  <!-- Resultados Gold (Cilindro) -->
+  <g transform="translate(510, 1160)">
+    <path d="M 0,12 L 0,58 A 72,12 0 0,0 144,58 L 144,12 Z" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <ellipse cx="72" cy="12" rx="72" ry="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="72" y="43" text-anchor="middle" font-size="15" font-weight="600" fill="#14532d">Resultados Gold</text>
+  </g>
+
+  <!-- ================= NODOS: SERVICIOS COMPARTIDOS ================= -->
+  <!-- 1. Configuración experimental [config.py] -->
+  <rect x="48" y="1432" width="245" height="64" fill="#ffe4e6" stroke="#e11d48" stroke-width="2" rx="4"/>
+  <text x="170.5" y="1460" text-anchor="middle" font-size="14.5" font-weight="600" fill="#881337">Configuración experimental</text>
+  <text x="170.5" y="1480" text-anchor="middle" font-size="14" font-family="Consolas, monospace" font-weight="600" fill="#881337">[config.py]</text>
+
+  <!-- 2. Clasificador de regímenes -->
+  <rect x="325" y="1432" width="235" height="64" fill="#ffe4e6" stroke="#e11d48" stroke-width="2" rx="4"/>
+  <text x="442.5" y="1469" text-anchor="middle" font-size="15" font-weight="600" fill="#881337">Clasificador de regímenes</text>
+
+  <!-- 3. Métricas e inventario -->
+  <rect x="595" y="1432" width="215" height="64" fill="#ffe4e6" stroke="#e11d48" stroke-width="2" rx="4"/>
+  <text x="702.5" y="1469" text-anchor="middle" font-size="15" font-weight="600" fill="#881337">Métricas e inventario</text>
+
+  <!-- 4. Perfilado de costos [cost_profiler.py] -->
+  <rect x="840" y="1432" width="210" height="64" fill="#ffe4e6" stroke="#e11d48" stroke-width="2" rx="4"/>
+  <text x="945" y="1460" text-anchor="middle" font-size="14.5" font-weight="600" fill="#881337">Perfilado de costos</text>
+  <text x="945" y="1480" text-anchor="middle" font-size="14" font-family="Consolas, monospace" font-weight="600" fill="#881337">[cost_profiler.py]</text>
+
+  <!-- ================= FLECHAS Y CONEXIONES ORTOGONALES ================= -->
+  <!-- Investigador -> Entorno de prueba -->
+  <path d="M 450,119 L 450,231" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="422" y="138" width="56" height="22" fill="#efe4fb" rx="3"/>
+  <text x="450" y="154" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">inicia</text>
+
+  <!-- Datos H&M y VISUELLE -> Ingesta Bronze -->
+  <path d="M 670,105 L 670,228" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="615" y="138" width="110" height="22" fill="#efe4fb" rx="3"/>
+  <text x="670" y="154" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">ingesta datos</text>
+
+  <!-- Ingesta Bronze -> Panel y regímenes Silver -->
+  <path d="M 670,302 L 670,356" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="615" y="317" width="110" height="20" fill="#f5f5f2" rx="3"/>
+  <text x="670" y="331" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">prepara panel</text>
+
+  <!-- Panel y regímenes Silver -> Baselines y LightGBM -->
+  <path d="M 640,435 L 640,502 L 550,502 L 550,606" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="485" y="516" width="130" height="22" fill="#efe4fb" rx="3"/>
+  <text x="550" y="532" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">alimenta modelos</text>
+
+  <!-- Panel y regímenes Silver -> TSFM zero-shot -->
+  <path d="M 670,435 L 670,502 L 790,502 L 790,606" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="725" y="516" width="130" height="22" fill="#efe4fb" rx="3"/>
+  <text x="790" y="532" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">alimenta modelos</text>
+  <rect x="718" y="574" width="104" height="22" fill="#f5f5f2" rx="3"/>
+  <text x="770" y="591" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">Pronóstico</text>
+
+  <!-- Panel y regímenes Silver -> Adaptación LoRA -->
+  <path d="M 705,435 L 705,492 L 1010,492 L 1010,606" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="935" y="516" width="150" height="22" fill="#efe4fb" rx="3"/>
+  <text x="1010" y="532" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">alimenta adaptación</text>
+
+  <!-- Baselines y LightGBM -> Pronósticos Gold -->
+  <path d="M 550,662 L 550,758 L 608,758 L 608,791" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="415" y="718" width="142" height="22" fill="#f5f5f2" rx="3"/>
+  <text x="486" y="734" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">guarda pronósticos</text>
+
+  <!-- TSFM zero-shot -> Pronósticos Gold -->
+  <path d="M 760,662 L 760,758 L 640,758 L 640,791" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="590" y="718" width="142" height="22" fill="#f5f5f2" rx="3"/>
+  <text x="661" y="734" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">guarda pronósticos</text>
+
+  <!-- Adaptación LoRA -> Pronósticos Gold -->
+  <path d="M 980,662 L 980,685 L 850,685 L 850,768 L 668,768 L 668,791" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="776" y="718" width="152" height="22" fill="#f5f5f2" rx="3"/>
+  <text x="852" y="734" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">actualiza pronósticos</text>
+
+  <!-- Pronósticos Gold -> Evaluación y matriz -->
+  <path d="M 612,866 L 612,1036" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="546" y="936" width="132" height="22" fill="#efe4fb" rx="3"/>
+  <text x="612" y="952" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">evalúa resultados</text>
+  <rect x="520" y="1004" width="180" height="22" fill="#f5f5f2" rx="3"/>
+  <text x="610" y="1021" text-anchor="middle" font-size="16" font-weight="700" fill="#1e293b">Evaluación y decisión</text>
+
+  <!-- Evaluación y matriz -> Resultados Gold -->
+  <path d="M 582,1092 L 582,1156" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="515" y="1116" width="135" height="20" fill="#f5f5f2" rx="3"/>
+  <text x="582" y="1130" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">persiste resultados</text>
+
+  <!-- ================= CONEXIONES A SERVICIOS COMPARTIDOS ================= -->
+  <!-- Panel y regímenes Silver -> Clasificador de regímenes (resume regímenes) -->
+  <path d="M 610,435 L 610,478 L 300,478 L 300,1360 L 442,1360 L 442,1428" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="232" y="936" width="136" height="22" fill="#efe4fb" rx="3"/>
+  <text x="300" y="952" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">resume regímenes</text>
+
+  <!-- Baselines y LightGBM -> Métricas e inventario (calcula métricas) -->
+  <path d="M 498,662 L 498,682 L 385,682 L 385,1346 L 675,1346 L 675,1428" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="323" y="1106" width="124" height="22" fill="#efe4fb" rx="3"/>
+  <text x="385" y="1122" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">calcula métricas</text>
+
+  <!-- Evaluación y matriz -> Métricas e inventario (calcula métricas) -->
+  <path d="M 645,1092 L 645,1334 L 735,1334 L 735,1428" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="583" y="1295" width="124" height="22" fill="#efe4fb" rx="3"/>
+  <text x="645" y="1311" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">calcula métricas</text>
+
+  <!-- Baselines y LightGBM -> Perfilado de costos (perfila cómputo) -->
+  <path d="M 595,662 L 595,700 L 920,700 L 920,922 L 830,922 L 830,1334 L 900,1334 L 900,1428" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="772" y="1106" width="116" height="22" fill="#efe4fb" rx="3"/>
+  <text x="830" y="1122" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">perfila cómputo</text>
+
+  <!-- TSFM zero-shot -> Perfilado de costos (perfila cómputo) -->
+  <path d="M 820,662 L 820,685 L 975,685 L 975,1334 L 945,1334 L 945,1428" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="917" y="1106" width="116" height="22" fill="#efe4fb" rx="3"/>
+  <text x="975" y="1122" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">perfila cómputo</text>
+
+  <!-- Adaptación LoRA -> Perfilado de costos (perfila cómputo) -->
+  <path d="M 1038,662 L 1038,685 L 1068,685 L 1068,922 L 1125,922 L 1125,1334 L 995,1334 L 995,1428" fill="none" stroke="#1e293b" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="1067" y="1106" width="116" height="22" fill="#efe4fb" rx="3"/>
+  <text x="1125" y="1122" text-anchor="middle" font-size="14" font-weight="500" fill="#1e293b">perfila cómputo</text>
+
+  <!-- Marca de agua original -->
+  <text x="1175" y="1542" text-anchor="end" font-size="12" fill="#64748b">gitdiagram.com/diego-0010619/tesis-tsfm-retail-moda-databricks</text>
+</svg>

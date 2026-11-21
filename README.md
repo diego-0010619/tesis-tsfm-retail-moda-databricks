@@ -72,7 +72,7 @@ flowchart LR
 
 ### Diagrama de Flujo de Componentes y Servicios Compartidos
 
-![Diagrama de arquitectura y flujo de componentes](./docs/diagrama_arquitectura_flujo.png)
+[![Diagrama de arquitectura y flujo de componentes](./docs/diagrama_arquitectura_flujo_hd.svg)](./docs/diagrama_arquitectura_flujo_original_5k.png)
 
 ---
 
